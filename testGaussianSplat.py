@@ -14,6 +14,7 @@ if True:
     lego.node.rotate(m.quater(math.radians(-90), m.vector3(1,0,0)))
 elif False:
     lego=RE.GaussianSplat('lego', 'dataset/data/lego.ply')
+    #lego.exportAsOgreMesh('media/lego2.mesh')
     lego.node.scale(100,100,100)
     lego.node.rotate(m.quater(math.radians(-90), m.vector3(1,0,0)))
 else:

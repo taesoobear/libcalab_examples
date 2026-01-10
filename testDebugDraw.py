@@ -2,8 +2,8 @@ import os, sys, pdb, math, random
 
 
 import numpy as np
-import media.rendermodule_ogre as RE # should be earlier than import libcalab 
 from libcalab import m, lua, control
+import media.rendermodule_ogre as RE 
 
 layout=None
 def frameMove(fElapsedTime):

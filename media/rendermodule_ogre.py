@@ -32,7 +32,7 @@ class GaussianSplat:
         if filename[-5:]=='.mesh':
             self.entity=ogreSceneManager().createEntity(entity_name, filename)
         elif filename[-4:]=='.ply':
-            mesh=ply_to_mesh(filename+"_converted.mesh", filename)
+            self.mesh=ply_to_mesh(filename+"_converted.mesh", filename)
             self.entity= ogreSceneManager().createEntity( entity_name,filename+"_converted.mesh")
         else:
             assert(False)
@@ -88,6 +88,11 @@ class GaussianSplat:
                 idata.indexBuffer.unlock()
 
             self.node._update(True,False)
+    def exportAsOgreMesh(self, filename):
+        ser = Ogre.MeshSerializer()
+        assert(filename[-5:]=='.mesh')
+        ser.exportMesh(self.mesh, filename)
+
     def update(self):
         global _window_data
         cam = _window_data.camera
