@@ -11,6 +11,12 @@ def frameMove(fElapsedTime):
 
 def drawAll():
     global layout
+    numSides=20
+    RE.draw('Cylinder', m.transf(m.vector3(0,4,0)), 'cylinder1', m.vector3(2,0.5,numSides), 100, 'lightgrey_transparent')
+    RE.draw('Box', m.transf(m.vector3(0,2,0)), 'box1', m.vector3(2,0.5,1), 100, 'lightgrey_transparent')
+    #RE.draw('WireBox', m.transf(m.vector3(0,3,0)), 'box2', m.vector3(2,0.5,1), 100, 'solidred')
+    RE.draw('Text', m.vector3(0,400,0), 'cylinder1')
+    RE.draw('Text', m.vector3(0,200,0), 'text2',m.vector3(1.0,0,0), 28, 'a larger red text')  # font size doesn't work yet.
     if layout.findWidget('draw spheres').checkButtonValue() :
         if True:
             # draw spheres. using cm unit (default).
@@ -36,6 +42,10 @@ def drawAll():
             for i in range(1, 20+1):
                 RE.timedDraw(i*0.5, "Sphere", m.vector3(i*30, 0, 10), "blue", 20)
 
+            # RE.erase("Sphere", "ball3") # to erase the sphere from the scene
+            color=m.vector3(1,0,0)
+            textheight=15
+            RE.draw("Text",  pos+m.vector3(0,20,0), "The Ball3's caption is larger", color, textheight)
 
 def eraseAll():
     RE.eraseAllDrawn()

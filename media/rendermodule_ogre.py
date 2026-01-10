@@ -22,6 +22,8 @@ _activeBillboards={}
 _softKill=False
 _debugMode=False
 _frameMoveObjects=[]
+_cacheCylinderMeshes={}
+_cacheBoxMeshes={}
 start_time = time.time()
 
 _inputTranslationNecessary={'setPosition':True, 'setScale':True, 'setOrientation':True, 'rotate':True, 'translate':True, 'scale':True}
@@ -115,10 +117,12 @@ class GaussianSplat:
 
 
 def eraseAllDrawn():
-    global _objectList, _activeBillboards
+    global _objectList, _activeBillboards,_layout
     if _objectList is not None:
         _objectList.clear()
     _activeBillboards={}
+    _layout.layoutElements={}
+
 
 def updateBillboards(fElapsedTime):
     # no longer necessary
@@ -230,6 +234,9 @@ class ObjectList:
         self.isVisible=True
         self._scheduledObjects=[]
         _frameMoveObjects.append(self)
+    def registerLayoutElement(self,name_id,  *args):
+        global _layout
+        _layout.layoutElements[name_id]=args
     def __del__(self):
         global _frameMoveObjects
         if _frameMoveObjects is not None:
@@ -238,6 +245,7 @@ class ObjectList:
     def clear(self):
         removeEntity(self.mRootSceneNode)
         self.mRootSceneNode=ogreRootSceneNode().createChildSceneNode(self.uid)
+        self._scheduledObjects=[]
 
     def _findNode(node_name):
         try:
@@ -275,9 +283,14 @@ class ObjectList:
 
 
     def registerEntity( self, node_name,  filename, materialName=None):
-        entity_name=f"_entity_{self.uid}_{node_name}"
         pNode=	self._createSceneNode(node_name);
-        pEntity=RE.ogreSceneManager().createEntity(entity_name, filename)
+        pEntity=None
+        if isinstance(filename, str):
+            entity_name=f"_entity_{self.uid}_{node_name}"
+            pEntity=RE.ogreSceneManager().createEntity(entity_name, filename)
+        else:
+            assert(filename is not None)
+            pEntity=filename
         pNode.attachObject(pEntity)
         pNode.setVisible(self.isVisible);
 
@@ -286,17 +299,6 @@ class ObjectList:
         return pNode;
 
 
-class MeshToEntity:
-    def __init(mesh, meshId, buildEdgeList=False, dynamicUpdate=False,useNormal=True, useTexCoord=True, useColor=True):
-        self.mesh=mesh
-    def createEntity(entityName, materialName='white'):
-        pass
-    def getLastCreatedEntity():
-        pass
-    def updatePositions(self, vertices=None):
-        pass
-    def updatePositionsAndNormals(self):
-        pass
 
 def path(path):
     from pathlib import Path
@@ -341,9 +343,21 @@ class Widget:
 
 Widget.sliderValue=Widget.checkButtonValue
 
+class PythonExtendWin_member:
+    def __init__(self, name: str):
+        self.name=name
+    def __call__(self, *args):   
+        global _luaEnv
+        memberfunc=getattr(_luaEnv,self.name)
+        return memberfunc(*args)
 class Layout:
     def __init__(self):
         self.widgets=[]
+        self.layoutElements={}
+
+    # default member access functions
+    def __getattr__(self, name):
+        return PythonExtendWin_member(name)
     def create(self, type_name, uid,  title=None, pos=None, epos=None):
         self.widgets.append(Widget(type_name, uid, title,pos, epos))
     def addButton(self, title, on_screen_title=None):
@@ -359,96 +373,28 @@ class Layout:
             if v.uid==uid:
                 return v
         return None
-    def isLuaReady(self):
-        global _luaEnv
-        return _luaEnv.isLuaReady()
-    def getglobal(self, *args):
-        global _luaEnv
-        return _luaEnv.getglobal(*args)
-
-    def loadScript(self, *args):
-        global _luaEnv
-        return _luaEnv.loadScript(*args)
-    def releaseScript(self, *args):
-        global _luaEnv
-        return _luaEnv.releaseSript(*args)
-    def dofile(self, *args):
-        global _luaEnv
-        return _luaEnv.dofile(*args)
-    def dostring(self, *args):
-        global _luaEnv
-        return _luaEnv.dostring(*args)
-    def luaType(self, i:int):
-        global _luaEnv
-        return _luaEnv.luaType(i)
-    def lunaType(self, i:int):
-        global _luaEnv
-        return _luaEnv.lunaType(i)
-    def push(self, arg):
-        global _luaEnv
-        return _luaEnv.push(arg)
-    def pushBoolean(self, arg:bool):
-        global _luaEnv
-        return _luaEnv.pushBoolean(arg)
-    def call(self,*args):
-        global _luaEnv
-        return _luaEnv.call(*args)
-
-# not ported yet
-#			.def("pushnil", [](PythonExtendWin&l){lua_pushnil(l.L);})
-#			.def("newtable", [](PythonExtendWin&l){lua_newtable(l.L);})
-#			.def("settable", [](PythonExtendWin&l, int index){lua_settable(l.L, index);})
-#			.def("getglobalNoCheck", &PythonExtendWin_wrapper::getglobalNoCheck)
-#			.def("pushvalue",[](PythonExtendWin& l, int index){ lua_pushvalue(l.L, index);})
-#			.def("pushnil",[](PythonExtendWin& l){ lua_pushnil(l.L);})
-#			.def("next",[](PythonExtendWin& l, int index)->bool{ return lua_next(l.L, index);})
-#			.def("getMemberFunc", &PythonExtendWin_wrapper::getMemberFunc)
-#			.def("insert", &PythonExtendWin_wrapper::insert)
-#			.def("replaceTop", (void (*)(PythonExtendWin& l, const char* key))&PythonExtendWin_wrapper::replaceTop)
-#			.def("replaceTop", (void (*)(PythonExtendWin& l, int key))&PythonExtendWin_wrapper::replaceTop)
-#			.def("printStack", &PythonExtendWin_wrapper::printStack)
-#  			.def("popmatrixn", &PythonExtendWin_wrapper::popmatrixn, RETURN_REFERENCE)
-#  			.def("pophypermatrixn", &PythonExtendWin_wrapper::pophypermatrixn, RETURN_REFERENCE)
-#  			.def("popTensor", &PythonExtendWin_wrapper::popTensor, RETURN_REFERENCE)
-#  			.def("popvectorn", &PythonExtendWin_wrapper::popvectorn, RETURN_REFERENCE)
-#  			.def("popintvectorn", &PythonExtendWin_wrapper::popintvectorn, RETURN_REFERENCE)
-#  			.def("poploader", [](PythonExtendWin& l)->MotionLoader*{
-#  			.def("popMotion", [](PythonExtendWin& l)->Motion*{
-#  			.def("popPose", [](PythonExtendWin& l)->Posture*{
-#  			.def("popMotionDOF", [](PythonExtendWin& l)->MotionDOF*{
-#  			.def("popVRMLloader", [](PythonExtendWin& l)->VRMLloader*{
-#  			.def("popvector3", [](PythonExtendWin& l)->vector3*{
-#  			.def("popvector2", [](PythonExtendWin& l)->vector2*{
-#  			.def("poptransf", [](PythonExtendWin& l)->transf*{
-#  			.def("popquater", [](PythonExtendWin& l)->quater*{
-#  			.def("popmatrix4", [](PythonExtendWin& l)->matrix4*{
-#  			.def("popVector3N", [](PythonExtendWin& l)->vector3N*{
-#  			.def("popQuaterN", [](PythonExtendWin& l)->quaterN*{
-#  			.def("popTStrings", [](PythonExtendWin& l)->TStrings*{
-#  			.def("popboolN", [](PythonExtendWin& l)->boolN*{
-#  			.def("popCollisionDetector", [](PythonExtendWin& l)->OpenHRP::CollisionDetector*{
-#  			.def("popLoaderToTree", [](PythonExtendWin& l)->IK_sdls::LoaderToTree*{
-#			.def("popboolean", &PythonExtendWin_wrapper::popboolean)
-#  			.def("checkmatrixn", &PythonExtendWin_wrapper::checkmatrixn, RETURN_REFERENCE)
-#  			.def("checkhypermatrixn", &PythonExtendWin_wrapper::checkhypermatrixn, RETURN_REFERENCE)
-#  			.def("checkTensor", &PythonExtendWin_wrapper::checkTensor, RETURN_REFERENCE)
-#  			.def("checkvectorn", &PythonExtendWin_wrapper::checkvectorn, RETURN_REFERENCE)
-#  			.def("checkintvectorn", &PythonExtendWin_wrapper::checkintvectorn, RETURN_REFERENCE)
-#		    .def("popnumber", &PythonExtendWin_wrapper::popnumber)
-#		    .def("popstring", &PythonExtendWin_wrapper::popstring)
-#		    .def("popint", &PythonExtendWin_wrapper::popint)
-#			.def("set", &PythonExtendWin_wrapper::set)
-#  			.def("isnil", &PythonExtendWin_wrapper::isnil)
-#			.def("gettop",&PythonExtendWin_wrapper::gettop)
-#			.def("pop",&PythonExtendWin_wrapper::pop)
-#  			.def("popIntIntervals", [](PythonExtendWin& l)->intIntervals*{
-#  			.def("popScaledBoneKinematics", [](PythonExtendWin& l)->ScaledBoneKinematics*{
-#  			.def("popBoneForwardKinematics", [](PythonExtendWin& l)->BoneForwardKinematics*{
     def widget(self, n):
         return self.widgets[n-1]
     def updateLayout(self):
         pass
             
+def drawWireBox(*args):
+    pass
+def drawTraj(*args):
+    pass
+def timedDrawTraj(*args):
+    pass
+def drawText(objectList, pos, nameid, vec3_color=None, height=None, text=None):
+    mat=vec3_color or m.vector3(1,1,1)
+    height=height or 8
+    if text:
+        objectList.registerLayoutElement(nameid+"_mt", "MovableText", text, mat, height, pos)
+    else:
+        objectList.registerLayoutElement(nameid+"_mt", "MovableText", nameid, mat, height, pos)
+def drawAxes(*args):
+    pass
+def drawArrow(*args):
+    pass
 def drawSphere(objectList, pos, nameid, _materialName=None, _scale=None):
     if _scale is None:
         _scale=5 # 5 cm
@@ -461,6 +407,221 @@ def drawSphere(objectList, pos, nameid, _materialName=None, _scale=None):
     if comEntity is not None:
         comEntity.setScale(_scale, _scale, _scale)
         comEntity.setPosition(pos.x, pos.y, pos.z)
+
+class MeshToEntity:
+    def __init__(self, mesh, mesh_name=None, buildEdgeList=False, dynamicUpdate=False, useNormal=True,useTexCoord=True, useColor=False):
+
+        if(mesh.numTexCoord()==0 and useTexCoord):
+            useTexCoord=False;
+
+        if(mesh.numNormal()==0 and useNormal):
+            useNormal=False;
+
+        if(mesh.numColor()==0 and useColor):
+            useColor=False;
+        self.useColor=useColor
+        self.useNormal=useNormal
+        self.useTexCoord=useTexCoord
+        self.buildEdgeList=buildEdgeList
+        self.dynamicUpdate=dynamicUpdate;
+        if mesh_name is None:
+            mesh_name=m.generateUniqueName()
+        self.mesh_name=mesh_name
+
+        meshId=mesh_name
+        if(Ogre.MeshManager.getSingleton().resourceExists(meshId)):
+            ptr=Ogre.MeshManager.getSingleton().getByName(meshId);
+            Ogre.MeshManager.getSingleton().remove(ptr);
+
+        self.meshToEntity_cpp=m.MeshToEntity( mesh, mesh_name, buildEdgeList, dynamicUpdate, useNormal,useTexCoord, useColor)
+
+        if not hasattr(self.meshToEntity_cpp, 'getRawData'):
+            print("Ignoring this error. Please update libcalab to at least version 0.1.1 to render meshes correctly.")
+            # use manual object (slowww)
+            scene_mgr=ogreSceneManager()
+            manual = scene_mgr.createManualObject(meshId+"_manual")
+            manual.setDynamic(False)
+
+            # ⭐ 중요: 미리 capacity 예약
+            manual.estimateVertexCount(mesh.numVertex())
+            manual.estimateIndexCount(mesh.numFace()*3)
+
+            manual.begin("BaseWhiteNoLighting",
+                     Ogre.RenderOperation.OT_TRIANGLE_LIST)
+
+            for i in range(mesh.numVertex()):
+                v=mesh.getVertex(i)
+                manual.position(v.x, v.y, v.z)
+
+            for i in range(mesh.numFace()):
+                f=mesh.getFace(i)
+                manual.triangle(f.vertexIndex(0), f.vertexIndex(1), f.vertexIndex(2))
+            manual.end()
+            mMesh = manual.convertToMesh(meshId)
+            scene_mgr.destroyManualObject(manual)
+        else:
+            vertices=m.matrixn()
+            indices=m.intvectorn()
+            numSubMeshes=self.meshToEntity_cpp.getRawData(mesh, 0, vertices, indices)
+
+            assert(numSubMeshes==1)
+
+            # use low-level api
+            mMesh= Ogre.MeshManager.getSingleton().createManual(meshId, Ogre.RGN_DEFAULT);
+
+            sub = mMesh.createSubMesh();
+            sub.useSharedVertices = True
+            sub.operationType = Ogre.RenderOperation.OT_TRIANGLE_LIST
+            sub.createVertexData()
+
+            sub.vertexData.vertexCount=vertices.rows()
+
+            decl = sub.vertexData.vertexDeclaration
+            hbm = Ogre.HardwareBufferManager.getSingleton()
+            source = 0
+            buffers=[]
+            currentColumn=3
+            xyz=vertices.sub(0,0,0,3)
+            numVertices=vertices.rows()
+            buffers.append((xyz.array.astype(np.half), Ogre.VET_HALF3, Ogre.VES_POSITION,0))
+            if useNormal:
+                buffers.append((vertices.sub(0,0,currentColumn, currentColumn+3).array.astype(np.half), Ogre.VET_HALF3, Ogre.VES_NORMAL,0))
+                currentColumn+=3
+            if useTexCoord:
+                buffers.append((vertices.sub(0,0,currentColumn, currentColumn+1).array.astype(np.half), Ogre.VET_HALF3, Ogre.VES_TEXTURE_COORDINATES,0))
+                buffers.append((vertices.sub(0,0,currentColumn+1, currentColumn+2).array.astype(np.half), Ogre.VET_HALF3, Ogre.VES_TEXTURE_COORDINATES,1))
+                currentColumn+=2
+
+            #usage=Ogre.HBU_CPU_ONLY
+            usage=Ogre.HBU_GPU_ONLY
+            if dynamicUpdate:
+                #usage=Ogre.HBU_CPU_ONLY
+                usage=Ogre.HBU_CPU_TO_GPU
+
+            for data, vtype, vusage, vindex in buffers:
+                decl.addElement(source, 0, vtype, vusage, vindex)
+                hwbuf = hbm.createVertexBuffer(decl.getVertexSize(source), numVertices, usage)
+                sub.vertexData.vertexBufferBinding.setBinding(source, hwbuf)
+                hwbuf.writeData(0, hwbuf.getSizeInBytes(), data)
+                source += 1
+
+            mMesh._setBounds(Ogre.AxisAlignedBox(xyz.array.min(axis=0), xyz.array.max(axis=0))) # pylint: disable=protected-access
+
+            vertexBuffer = sub.vertexData.vertexBufferBinding.getBuffer(0);
+            if False:
+                #debug code
+                pos_elem = decl.findElementBySemantic(Ogre.VES_POSITION)
+                mPositions=np.zeros((numVertices,3)).astype(np.half)
+                ptr=vertexBuffer.lock(Ogre.HardwareBuffer.HBL_READ_ONLY)
+                print(vertexBuffer.getSizeInBytes()/ numVertices)
+
+                u16_ptr = ctypes.cast(int(ptr), ctypes.POINTER(ctypes.c_uint16))
+
+                # zero-copy uint16 array
+                raw = np.ctypeslib.as_array(
+                    u16_ptr, shape=(numVertices, 3)
+                )
+
+                # reinterpret uint16 → float16
+                mPositions = raw.view(np.float16).copy()
+
+                vertexBuffer.unlock()
+                print(mPositions, xyz)
+                pdb.set_trace()
+
+            # create index buffer
+            idata = sub.indexData;
+            self.idata=idata
+            indexCount=indices.size()
+            idata.indexCount = indexCount;
+            mIndexBuffer = vertexBuffer.getManager().createIndexBuffer(Ogre.HardwareIndexBuffer.IT_32BIT, indexCount, usage)
+            idata.indexBuffer = mIndexBuffer;
+
+            indices_np= indices.array
+
+            buf = idata.indexBuffer.lock(
+                0,
+                indexCount * idata.indexBuffer.getIndexSize(),
+                Ogre.HardwareBuffer.HBL_DISCARD
+            )
+            ctypes.memmove(int(buf), indices_np.ctypes.data, indices_np.nbytes)
+            idata.indexBuffer.unlock()
+
+        self.mMesh=mMesh
+    def createEntity(self, entityName,  materialName):
+
+        if(ogreSceneManager().hasEntity(entityName)):
+            ogreSceneManager().destroyEntity(entityName);
+        
+        entity=ogreSceneManager().createEntity(entityName, self.mMesh.getName());
+        self.entity=entity
+        entity.setMaterialName(materialName);
+        return entity
+
+    def getLastCreatedEntity():
+        return self.entity
+    def updatePositions(self, vertices=None):
+        pass
+    def updatePositionsAndNormals(self):
+        pass
+
+def drawCylinder(objectlist, tf, nameid, cylinderSize, skinScale=None, material=None):
+    global _cacheCylinderMeshes
+    if not skinScale :
+        skinScale=100
+
+    mesh=_cacheCylinderMeshes.get(nameid)
+    if mesh is None:
+        g=m.Geometry()
+        c=m.vector3( cylinderSize.x*skinScale, cylinderSize.y*skinScale, cylinderSize.z)
+        if c.z<3 : 
+           c.z=3 
+        g.initCylinder(c.x*0.5, c.y, int(c.z))
+        mesh= ( g, 
+           MeshToEntity(g, 'mesh_'+nameid, False, True),
+           cylinderSize*skinScale
+        )
+        _cacheCylinderMeshes[nameid]=mesh
+
+    g, meshToEntity, ssize=mesh
+    entity=meshToEntity.createEntity('entity_'+nameid, material or 'lightgrey_transparent')
+    tfg=objectlist.registerEntity(nameid, entity)
+    if not (ssize==cylinderSize*skinScale) :
+        c=m.vector3( cylinderSize.x*skinScale, cylinderSize.y*skinScale, cylinderSize.z)
+        if c.z<3 : 
+            c.z=3 
+        g.initCylinder(c.x*0.5, c.y, int(c.z))
+        meshToEntity.updatePositionsAndNormals()
+
+    tfg.setPosition(tf.translation*skinScale)
+    tfg.setOrientation(tf.rotation)
+
+
+def drawBox(objectlist, tf, nameid, boxSize, skinScale=None, material=None):
+    global _cacheBoxMeshes
+    if not skinScale :
+        skinScale=100
+
+    mesh=_cacheBoxMeshes.get(nameid)
+    if mesh is None:
+       g=m.Geometry()
+       g.initBox(boxSize*skinScale)
+       mesh= ( g, 
+           MeshToEntity(g, 'mesh_'+nameid, False, True),
+           boxSize*skinScale
+       )
+
+       _cacheBoxMeshes[nameid]=mesh
+
+    g, meshToEntity, ssize=mesh
+    entity=meshToEntity.createEntity('entity_'+nameid, material or 'lightgrey_transparent')
+    tfg=objectlist.registerEntity(nameid, entity)
+    if not (ssize==boxSize*skinScale) :
+       g.initBox(boxSize*skinScale)
+       meshToEntity.updatePositionsAndNormals()
+
+    tfg.setPosition(tf.translation*skinScale)
+    tfg.setOrientation(tf.rotation)
 
 def drawSphereM(objectList, pos, nameid, _materialName=None, _radius=None):
     if _radius is None:
@@ -501,51 +662,116 @@ def timedDraw(time, typename, *args):
     getattr(this_module, 'timedDraw'+typename)(_objectList, time, *args)
 
 def namedDraw(typename,*args):
+    global _objectList
     draw(typename, *args)
+
+    pos=None
+    nameid=None
+    color='blue'
+    p=(typename, *args)
+    if typename=="Sphere" or typename=="SphereM":
+        pos=p[1]
+        if typename=="SphereM":
+            pos=pos*100
+        nameid=p[2]
+        if len(p)>4: 
+            color=p[3] 
+    elif typename=='Axes':
+        pos=p[1].translation
+        nameid=p[2]
+        if len(p)>4:
+            pos=pos*p[3]
+    if pos :
+        if 'ed' in color:
+            mat=m.vector3(0.7,0,0)
+        elif 'reen' in color:
+            mat=m.vector3( 0,0.5,0)
+        else:
+            mat=m.vector3( 0,0,1) 
+        fontSize=8
+        _objectList.registerLayoutElement(nameid+"_mt", "MovableText", nameid, mat,fontSize, pos+m.vector3(0,15.0/8.0*fontSize,0))
+
 def drawBillboard(datapoints, nameid, material, thickness, billboard_type):
     pass
 
 
 def dummyOnCallback(w, userData):
     pass
-def ui_callback():
+def _world_to_screen(world_pos):
+    global _window_data
+    camera=_window_data.camera
+    viewport=_window_data.window.getViewport(0)
+
+    # 1. World → Clip space
+    view = camera.getViewMatrix(True)
+    proj = camera.getProjectionMatrixWithRSDepth()
+
+    clip = proj * (view * Ogre.Vector4(world_pos.x, world_pos.y, world_pos.z, 1.0))
+
+    # behind camera
+    if clip.w <= 0.0:
+        return None, None, False
+
+    # 2. NDC
+    ndc_x = clip.x / clip.w
+    ndc_y = clip.y / clip.w
+
+    # 3. Screen (pixel)
+    vp_width  = viewport.getActualWidth()
+    vp_height = viewport.getActualHeight()
+
+    screen_x = (ndc_x * 0.5 + 0.5) * vp_width
+    screen_y = (1.0 - (ndc_y * 0.5 + 0.5)) * vp_height
+
+    return int(screen_x), int(screen_y), True
+def ui_callback(): # handle ui events and draw texts
     global _layout, _mouseInfo, _window_data,_softKill
     # This function is called every frame to draw your custom ImGui elements
 
     #imgui.NewFrame()
     #imgui.ShowDemoWindow() # Displays the standard Dear ImGui demo window
     imgui.SetNextWindowSize(imgui.ImVec2(200, 200), imgui.Cond_Once)
+
+    # draw texts
+
+    draw_list=imgui.GetForegroundDrawList()
+    for i, v in _layout.layoutElements.items():
+        typeid, text, mat, height, pos=v
+        screen_x, screen_y, exist=_world_to_screen(pos)
+        if exist:
+            pos=imgui.ImVec2(screen_x, screen_y);
+            color = imgui.GetColorU32(imgui.ImVec4(mat.x*255,mat.y*255, mat.z*255, 255)); 
+            draw_list.AddText(pos, color, text)
     # -----------------------------
     # ImGui UI
     # -----------------------------
-    if not imgui.Begin("Menu"):
-        _softKill=True
+    if imgui.Begin("Menu"):
     
-    if hasattr(__main__,'onCallback'):
-        onCallback=__main__.onCallback
-    else:
-        onCallback=dummyOnCallback
-    try:
-        for i,v  in enumerate(_layout.widgets):
-            if v.type_name=='Button':
-                if imgui.Button(v.title or v.uid):
-                    onCallback(v, None)
-            elif v.type_name=='Check_Button':
-                changed,value=imgui.Checkbox(v.title or v.uid, v.checkButtonValue())
-                if changed:
-                    v.checkButtonValue(value)
-                    onCallback(v, None)
-            elif v.type_name=='Value_Slider':
-                changed, my_value = imgui.SliderFloat(v.title or v.uid, v.sliderValue(), *v.sliderRange())
-                if changed:
-                    v.sliderValue(my_value)
-                    onCallback(v, None)
-            else:
-                print(v.type_name, 'not implemented yet')
+        if hasattr(__main__,'onCallback'):
+            onCallback=__main__.onCallback
+        else:
+            onCallback=dummyOnCallback
+        try:
+            for i,v  in enumerate(_layout.widgets):
+                if v.type_name=='Button':
+                    if imgui.Button(v.title or v.uid):
+                        onCallback(v, None)
+                elif v.type_name=='Check_Button':
+                    changed,value=imgui.Checkbox(v.title or v.uid, v.checkButtonValue())
+                    if changed:
+                        v.checkButtonValue(value)
+                        onCallback(v, None)
+                elif v.type_name=='Value_Slider':
+                    changed, my_value = imgui.SliderFloat(v.title or v.uid, v.sliderValue(), *v.sliderRange())
+                    if changed:
+                        v.sliderValue(my_value)
+                        onCallback(v, None)
+                else:
+                    print(v.type_name, 'not implemented yet')
 
 
-    except Exception as e:
-        print(e)
+        except Exception as e:
+            print(e)
 
     mx = imgui.GetMousePos()
     wx  = imgui.GetWindowPos()
@@ -1097,3 +1323,29 @@ if True:
 
         mesh = splat_to_mesh(mesh_name, xyz, color, covd, covu)
         return mesh
+
+
+def _tempFunc(mesh, materialName, _optionalNodeName=None, _optionalDoNotUseNormal=None):
+    lua.require("Kinematics/meshTools")
+    if _optionalNodeName is None:
+        _optionalNodeName='node_name'
+
+    useTexCoord=False
+    useColor=False
+
+    if mesh.numNormal()==0 :
+        _optionalDoNotUseNormal=True
+    if mesh.numTexCoord()>0 :
+        useTexCoord=True
+    if mesh.numColor()>0 :
+        useColor=True
+    # scale 100 for rendering 
+    meshToEntity=MeshToEntity(mesh, 'meshName'+_optionalNodeName, False, True, not _optionalDoNotUseNormal, useTexCoord, useColor)
+    entity=meshToEntity.createEntity('entityName'+_optionalNodeName , materialName or "CrowdEdit/Terrain1")
+    if entity :
+        node=ogreRootSceneNode().createChildSceneNode(_optionalNodeName)
+        node.attachObject(entity)
+        return meshToEntity,node
+    return None
+m.Mesh.drawMesh=_tempFunc # overwrite
+m.renderOneFrame=renderOneFrame
