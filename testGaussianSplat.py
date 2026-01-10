@@ -1,5 +1,5 @@
 from libcalab import m, lua, control
-import rendermodule_ext as RE
+import media.rendermodule_ogre as RE
 import numpy as np
 import pdb, math
 

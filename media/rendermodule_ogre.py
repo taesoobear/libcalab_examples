@@ -1,6 +1,6 @@
 from libcalab import m, RE, lua, control
-# here RE denotes rendermodule (console mode). ( rendermodule != rendermodule_ogre)
-import Ogre
+# here the RE above denotes the console mode rendermodule. ( rendermodule != rendermodule_ogre)
+import Ogre # pip install ogre-python
 import Ogre.RTShader
 import Ogre.Bites
 import Ogre.Numpy
@@ -21,6 +21,7 @@ _objectList=None
 _activeBillboards={}
 _softKill=False
 _debugMode=False
+_frameMoveObjects=[]
 start_time = time.time()
 
 _inputTranslationNecessary={'setPosition':True, 'setScale':True, 'setOrientation':True, 'rotate':True, 'translate':True, 'scale':True}
@@ -124,6 +125,15 @@ class SceneNodeWrap:
     def __init__(self, node : Ogre.SceneNode):
         self.sceneNode=node
 
+    def getEntity(self):
+        if self.sceneNode.numAttachedObjects()==0:
+            return None
+        name=self.sceneNode.getAttachedObject(0).getName()
+        try:
+            pEntity=ogreSceneManager().getEntity(name)
+            return pEntity
+        except:
+            return None
     # default member access functions
     def __getattr__(self, name):
         return SceneNode_member(name, self.sceneNode)
@@ -209,24 +219,59 @@ def getSceneNode( uid):
 
 class ObjectList:
     def __init__(self):
+        global _frameMoveObjects
         self.uid=m.generateUniqueName()+"_"
         self.mRootSceneNode=ogreRootSceneNode().createChildSceneNode(self.uid)
         self.isVisible=True
-        self.nodes={}
+        self._scheduledObjects=[]
+        _frameMoveObjects.append(self)
+    def __del__(self):
+        global _frameMoveObjects
+        if _frameMoveObjects is not None:
+            _frameMoveObjects.remove(self)
     
     def clear(self):
         removeEntity(self.mRootSceneNode)
         self.mRootSceneNode=ogreRootSceneNode().createChildSceneNode(self.uid)
-        self.nodes={}
 
-    def createSceneNode(self, node_name):
-        if node_name in self.nodes:
-            removeEntity(self.nodes[node_name])
-        return self.mRootSceneNode.createChildSceneNode(node_name)
+    def _findNode(node_name):
+        try:
+            return self.mRootSceneNode.getChild(node_name)
+        except:
+            return None
+
+    def _createSceneNode(self, node_name):
+        removeEntity(node_name)
+        node= self.mRootSceneNode.createChildSceneNode(node_name)
+        return node
+
+    def registerEntityScheduled(self, filename, destroyTime):
+        return self.registerObjectScheduled(RE.ogreSceneManager().createEntity(m.generateUniqueName(), filename), destroyTime)
+    def registerObjectScheduled(self, pObject, destroyTime):
+        pNode=self._createSceneNode(m.generateUniqueName())
+        pNode.attachObject(pObject)
+        self._scheduledObjects.append([pNode, destroyTime])
+        return pNode
+    def frameMove(self, fElapsedTime):
+        i=0
+        while i<len(self._scheduledObjects):
+            v=self._scheduledObjects[i]
+            v[1]-=fElapsedTime
+            if v[1]<0:
+                removeEntity(v[0])
+                self._scheduledObjects.pop(i)
+            else:
+                i+=1
+
+    def eraseAllScheduled(self):
+        for i ,v in enumerate(self._scheduledObjects):
+            removeEntity(v[0])
+        self._scheduledObjects=[]
+
 
     def registerEntity( self, node_name,  filename, materialName=None):
         entity_name=f"_entity_{self.uid}_{node_name}"
-        pNode=	self.createSceneNode(node_name);
+        pNode=	self._createSceneNode(node_name);
         pEntity=RE.ogreSceneManager().createEntity(entity_name, filename)
         pNode.attachObject(pEntity)
         pNode.setVisible(self.isVisible);
@@ -412,16 +457,46 @@ def drawSphere(objectList, pos, nameid, _materialName=None, _scale=None):
         comEntity.setScale(_scale, _scale, _scale)
         comEntity.setPosition(pos.x, pos.y, pos.z)
 
+def drawSphereM(objectList, pos, nameid, _materialName=None, _radius=None):
+    if _radius is None:
+        drawSphere(objectList, pos*100, nameid, _materialName, _radius*100)
+    else:
+        drawSphere(objectList, pos*100, nameid, _materialName)
+def timedDrawSphere(objectList, time, pos, _materialName=None, _scale=None):
+    if _scale is None:
+        _scale=5 # 5 cm
+
+    comEntity=objectList.registerEntityScheduled( "sphere1010.mesh", time)
+    if _materialName is not None:
+
+        if _materialName is not None:
+            comEntity.getEntity().setMaterialName(_materialName)
+        comEntity.setScale(_scale, _scale, _scale)
+        comEntity.setPosition(pos.x, pos.y, pos.z)
+
+def timedDrawSphereM(objectList, time, pos, _materialName=None, _scale=None):
+    if _scale is not None:
+        timedDrawSphere(objectList, time, pos*100, _materialName, _scale*100)
+    else:
+        timedDrawSphere(objectList, time, pos*100, _materialName)
 def draw(typename,*args):
     global _objectList
     if _objectList is None:
         _objectList=ObjectList()
-    if typename=='Sphere':
-        drawSphere(_objectList, *args)
+
+    this_module = sys.modules[__name__]
+    getattr(this_module, 'draw'+typename)(_objectList, *args)
+
+def timedDraw(time, typename, *args):
+    global _objectList
+    if _objectList is None:
+        _objectList=ObjectList()
+
+    this_module = sys.modules[__name__]
+    getattr(this_module, 'timedDraw'+typename)(_objectList, time, *args)
+
 def namedDraw(typename,*args):
     draw(typename, *args)
-def timedDraw(time, typename,*args):
-    pass
 def drawBillboard(datapoints, nameid, material, thickness, billboard_type):
     pass
 
@@ -457,6 +532,9 @@ def ui_callback():
                     onCallback(v, None)
             elif v.type_name=='Value_Slider':
                 changed, my_value = imgui.SliderFloat(v.title or v.uid, v.sliderValue(), *v.sliderRange())
+                if changed:
+                    v.sliderValue(my_value)
+                    onCallback(v, None)
             else:
                 print(v.type_name, 'not implemented yet')
 
@@ -477,8 +555,9 @@ def ui_callback():
     altPressed = imgui.GetIO().KeyAlt;
     ctrlPressed = imgui.GetIO().KeyCtrl;
     shiftPressed = imgui.GetIO().KeyShift;
-    imgui.Text(f"pressed:{altPressed,ctrlPressed, shiftPressed}")
+    #imgui.Text(f"pressed:{altPressed,ctrlPressed, shiftPressed}")
 
+    imgui.Text("press q to quit.")
     if not hovered:
         #imgui.IsWindowHovered(  ) and not imgui.IsItemHovered():
         # Mouse info
@@ -488,7 +567,7 @@ def ui_callback():
             _mouseInfo.drag=False
 
         _mouseInfo.pos=m.vector3(mouse_pos.x, mouse_pos.y,0)
-        imgui.Text(f"Mouse position: ({(mouse_pos.x, mouse_pos.y)})")
+        #imgui.Text(f"Mouse position: ({(mouse_pos.x, mouse_pos.y)})")
         width=_window_data.window.getWidth()
         height=_window_data.window.getHeight()
 
@@ -645,7 +724,6 @@ def createMainWin(*args):
     
     ohi.user_resource_locations.add("work/taesooLib/media/models")
     ohi.user_resource_locations.add("work/taesooLib/media/materials/textures")
-    ohi.user_resource_locations.add("work/taesooLib/media")
     if os.path.exists('./media'):
         ohi.user_resource_locations.add("media")
     ohi._init_ogre(window_name, imsize)
@@ -691,6 +769,12 @@ def renderOneFrame(check):
     if check:
         if elapsed>1.0/30:
             elapsed=1.0/30
+        if hasattr(__main__,'frameMove'):
+            __main__.frameMove(elapsed)
+
+        for i, v in enumerate(_frameMoveObjects):
+            v.frameMove(elapsed)
+
         _sceneGraphs=RE._sceneGraphs
         if _sceneGraphs is not None:
             for i, v in enumerate(_sceneGraphs):
