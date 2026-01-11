@@ -23,6 +23,8 @@ MacOS (ARM) and linux (AMD64) with python 3.12 only.
 # How to run examples
 =
 ```
-  pip3 install numpy torch libcalab easydict ogre-python
+   pip3 install --upgrade libcalab
+  pip3 install numpy torch easydict ogre-python
   python3 SceneEditor.py
 ```
+
