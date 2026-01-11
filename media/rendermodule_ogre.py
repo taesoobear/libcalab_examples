@@ -1152,9 +1152,9 @@ def checkedHandleRendererEvent(ev, x, y):
                 if imgui.IsMouseClicked(0): 
                     button=1
                 elif imgui.IsMouseClicked(1):
-                    button=2
-                else:
                     button=3
+                else:
+                    button=2
             __main__.handleRendererEvent(ev, button, x, y)
             _prevMouse=(x,y, button)
         except Exception as e:
@@ -1485,6 +1485,7 @@ def createMainWin(*args):
     m.FltkRenderer=_getPythonWin
     m.getSceneNode=getSceneNode
     m.renderOneFrame=renderOneFrame
+    m.ObjectList=ObjectList
     RE.output=output
     RE.draw=draw
     RE.erase=erase
