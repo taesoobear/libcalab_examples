@@ -7,12 +7,17 @@ import Ogre.Numpy
 import Ogre.HighPy as ohi
 import Ogre.ImGui as imgui
 import time,sys,os,math, random
-import pdb
+import pdb, traceback
 import ctypes
 from pathlib import Path
 import subprocess, re
 import __main__
 import numpy as np
+
+useFSAA=False
+
+
+# private 
 _mouseInfo=None
 _window_data=None
 _layout=None
@@ -22,15 +27,44 @@ _activeBillboards={}
 _softKill=False
 _debugMode=False
 _frameMoveObjects=[]
+_cameraEventReceivers=[]
 _cacheCylinderMeshes={}
 _cacheBoxMeshes={}
-start_time = time.time()
-
+_start_time = time.time()
 _inputTranslationNecessary={'setPosition':True, 'setScale':True, 'setOrientation':True, 'rotate':True, 'translate':True, 'scale':True}
 _outputTranslationNecessary={'getPosition':True, 'getScale':True, 'getParent':True, '_getDerivedOrientation':True, '_getDerivedScale':True, '_getDerivedPosition':True, 'getOrientation':True, 'createChildSceneNode':True}
+_prevMouse=(0,0,1)
+_outputs={} # debug outputs
+_drawOutput=False
 
+SceneGraph=RE.SceneGraph
+def output(key, *args):
+    global _outputs
+    _outputs[key]=str(args)
+
+
+def output2(key,*args):
+    output(key,*args)
+
+class _Application(ohi._Application):
+    def oneTimeConfig(self):
+        global useFSAA
+        self.getRoot().restoreConfig()
+        rs = self.getRoot().getRenderSystemByName("OpenGL 3+ Rendering Subsystem")
+        if useFSAA:
+            rs.setConfigOption("FSAA", "4")
+            rs.setConfigOption("VSync", "Yes")
+        else:
+            # faster
+            rs.setConfigOption("FSAA", "0")
+            rs.setConfigOption("VSync", "No")
+        self.getRoot().setRenderSystem(rs)
+        self.getRoot().saveConfig()
+        return True
 class GaussianSplat:
     def __init__(self, entity_name, filename):
+        global _cameraEventReceivers
+        _cameraEventReceivers.append(self)
         if filename[-5:]=='.mesh':
             self.entity=ogreSceneManager().createEntity(entity_name, filename)
         elif filename[-4:]=='.ply':
@@ -42,7 +76,6 @@ class GaussianSplat:
         rootnode=RE.ogreRootSceneNode()
         self.node=rootnode.createChildSceneNode(entity_name+"_node")
         self.node.attachObject(self.entity)
-        self.lastCamPos=Ogre.Vector3(1e5,1e5,1e5)
         if True:
             lego_entity=self.entity
             # get positions for sorting
@@ -90,17 +123,21 @@ class GaussianSplat:
                 idata.indexBuffer.unlock()
 
             self.node._update(True,False)
+    def __del__(self):
+        global _cameraEventReceivers
+        if _cameraEventReceivers is not None:
+            _cameraEventReceivers.remove(self)
     def exportAsOgreMesh(self, filename):
         ser = Ogre.MeshSerializer()
         assert(filename[-5:]=='.mesh')
         ser.exportMesh(self.mesh, filename)
 
-    def update(self):
+
+    def _update(self):
         global _window_data
         cam = _window_data.camera
         camPos=cam.getDerivedPosition()
-        camDist=(camPos-self.lastCamPos).squaredLength()
-        if camDist>1:
+        if True:
             localCamPos=self.node._getDerivedOrientation().inverse()*m.vector3(camPos.x, camPos.y, camPos.z)
             distances=self.positions@localCamPos.array
             idx=np.argsort(distances).astype(np.int32)
@@ -113,7 +150,6 @@ class GaussianSplat:
             )
             ctypes.memmove(int(buf), idx.ctypes.data, idx.nbytes)
             idata.indexBuffer.unlock()
-            self.lastCamPos=Ogre.Vector3(camPos.x, camPos.y, camPos.z)
 
 
 def eraseAllDrawn():
@@ -127,6 +163,26 @@ def eraseAllDrawn():
 def updateBillboards(fElapsedTime):
     # no longer necessary
     pass
+class SceneManagerWrap:
+    def __init__(self, mgr : Ogre.SceneManager):
+        self.mgr=mgr
+    def getSceneNode(self, name):
+        pnode=self.mgr.getSceneNode(name)
+        if pnode is None:
+            return None
+        return SceneNodeWrap(pnode)
+    # default member access functions
+    def __getattr__(self, name):
+        return SceneManager_member(name, self.mgr)
+
+class SceneManager_member:
+    def __init__(self, name: str, mgr : Ogre.SceneManager):
+        self.name=name
+        self.mgr=mgr
+    def __call__(self, *args):   
+        memberfunc=getattr(self.mgr,self.name)
+        ret=memberfunc(*args)
+        return ret
 # you can use the SceneNodeWrap class in the same way as Ogre.SceneNode
 # basically, this is a way to inherit swig-bound c++ class in the python side.
 # (pybind provides a much cleaner way but ogre-python uses swig.)
@@ -174,6 +230,12 @@ def removeEntityByName(name):
     removeEntity(name)
 def removeEntity(uid):
     global _debugMode
+    if isinstance(uid, str):
+        uid=getSceneNode(uid)
+    if isinstance(uid, Ogre.Node):
+        # todo: is this the only way?
+        uid=getSceneNode(uid.getName())
+
     if isinstance(uid, Ogre.SceneNode) or isinstance(uid, SceneNodeWrap):
         node=uid
         if node is not None:
@@ -197,6 +259,7 @@ def removeEntity(uid):
                     uid=node.getName()
                     print('destroying', uid)
                 if isinstance(node, SceneNodeWrap):
+                    assert(node.sceneNode is not None)
                     ogreSceneManager().destroySceneNode(node.sceneNode)
                     #node.getParentSceneNode().removeAndDestroyChild(node.sceneNode)
                     node.sceneNode=None
@@ -212,12 +275,6 @@ def removeEntity(uid):
             #    print('error in removeEntity')
             #    pdb.set_trace()
         return
-    try:
-        assert(isinstance(uid, str))
-        pNode=ogreSceneManager().getSceneNode(uid);
-        removeEntity(pNode);
-    except Exception as e:
-        pass
 def getSceneNode( uid):
     try:
         assert(isinstance(uid, str))
@@ -227,6 +284,17 @@ def getSceneNode( uid):
         return None
 
 class ObjectList:
+    def _createChain(self, chain_name):
+        scene_mgr=ogreSceneManager()
+        if (scene_mgr.hasBillboardChain(chain_name)):
+            line=scene_mgr.getBillboardChain(chain_name) 
+            parentNode=line.getParentSceneNode()
+            parentNode.detachObject(0)
+            line.clearAllChains()
+        else:
+            line=scene_mgr.createBillboardChain(chain_name) 
+        return line
+
     def __init__(self):
         global _frameMoveObjects
         self.uid=m.generateUniqueName()+"_"
@@ -247,7 +315,13 @@ class ObjectList:
         self.mRootSceneNode=ogreRootSceneNode().createChildSceneNode(self.uid)
         self._scheduledObjects=[]
 
-    def _findNode(node_name):
+    def erase(self, node_name):
+        pnode =self._findNode(node_name)
+        if pnode is not None:
+            removeEntity(pnode)
+            pnode =self._findNode(node_name)
+
+    def _findNode(self, node_name):
         try:
             return self.mRootSceneNode.getChild(node_name)
         except:
@@ -258,11 +332,150 @@ class ObjectList:
         node= self.mRootSceneNode.createChildSceneNode(node_name)
         return node
 
+    def _registerObject(self, node_name, pObj):
+        pNode=	self._createSceneNode(node_name);
+        if pObj:
+            pNode.attachObject(pObj)
+        return pNode;
+
+    def _materialToColor(self,materialName):
+        mn=materialName.upper()
+        if "RED" in mn:
+            return m.vector3(1.0,0.0,0.0);
+        if "BLUE" in mn:
+            return m.vector3(0.0,0.2,0.8);
+        if "GREEN" in mn:
+            return m.vector3(0.1,0.9,0.1);
+        if "WHITE" in mn:
+            return m.vector3(1.0,1.0,1.0);
+        if "GREY" in mn:
+            return m.vector3(0.5,0.5,0.5);
+        else :
+            return m.vector3(0.0,0.0,1.0);
+    def registerObject(self, node_name, typeName, materialName, data, thickness=0.7):
+        return self._registerObject(node_name, self._createObject(node_name, typeName, materialName, data, thickness));
+
+    def _createObject(self, node_name, tn, materialName, data, thickness):
+        line=None
+        if tn=="BillboardChain":
+            if thickness==0:
+                thickness=0.7
+            line=self._createChain(node_name+"_obc")
+            line.setMaxChainElements(data.rows())
+            for i in range(data.rows()):
+                r=data.row(i);
+                width=r(6)
+                texcoord=r(7)
+                line.addChainElement(0, Ogre.BillboardChain_Element(r.toVector3(0)._toOgre(), width, texcoord, Ogre.ColourValue(r(3),r(4),r(5), 1), Ogre.Quaternion(1,0,0,0)));
+            line.setMaterialName('use_vertexcolor_only', Ogre.RGN_DEFAULT)
+            return line
+        elif tn[:8]=='QuadList':
+            if thickness==0:
+                thickness=10
+            normal=m.vector3(0,1,0);
+
+            if(tn[-1:]=="Z"):
+                normal=m.vector3(0,0,1);
+            elif(tn[-1:]=="X"):
+                normal=m.vector3(0,1,0);
+            elif(tn[-1:]=="V"):
+                vp=RE.viewpoint()
+                normal=vp.vat-vp.vpos
+                normal.normalize();
+                normal.scale(-1)
+            if isinstance(data, m.matrixn):
+                data=data.vec3ViewCol(0)
+            quads=_QuadList(node_name, normal, thickness);
+            quads.begin(data.size(), materialName);
+            for i in range(data.size()):
+                quads.quad(i, data(i));
+            quads.end();
+            return quads.manual;
+        elif tn=='ColorBillboardLineList': # uses a colormap
+            # use ColorBillboardLineList
+            if thickness==0:
+                thickness=0.7
+
+            line=self._createChain(node_name+"_obc")
+            line.setMaxChainElements(2)
+            nchains=int(data.rows()/3)
+            line.setNumberOfChains(nchains)
+            tu1=0.0
+            tu2=1.0
+            for i in range(nchains):
+                start=data.row(i*3).toVector3(0)
+                end=data.row(i*3+1).toVector3(0)
+                c=data.row(i*3+2).toVector3(0)
+                line.addChainElement(i, Ogre.BillboardChain_Element(start._toOgre(), thickness, tu1, Ogre.ColourValue(c.x, c.y, c.z, 1), Ogre.Quaternion(1,0,0,0)));
+                line.addChainElement(i, Ogre.BillboardChain_Element(end._toOgre(), thickness, tu2, Ogre.ColourValue(c.x, c.y, c.z, 1), Ogre.Quaternion(1,0,0,0)));
+            line.setMaterialName(materialName, Ogre.RGN_DEFAULT)
+            return line
+        elif tn.endswith('LineList'):
+            if thickness==0:
+                thickness=0.7
+
+            line=self._createChain(node_name+"_obc")
+            line.setMaxChainElements(2)
+            nchains=int(data.rows()/2)
+            line.setNumberOfChains(nchains)
+            c=self._materialToColor(materialName);
+            tu1=0.0
+            tu2=1.0
+            for i in range(nchains):
+                start=data.row(i*2).toVector3(0)
+                end=data.row(i*2+1).toVector3(0)
+                line.addChainElement(i, Ogre.BillboardChain_Element(start._toOgre(), thickness, tu1, Ogre.ColourValue(c.x, c.y, c.z, 1), Ogre.Quaternion(1,0,0,0)));
+                line.addChainElement(i, Ogre.BillboardChain_Element(end._toOgre(), thickness, tu2, Ogre.ColourValue(c.x, c.y, c.z, 1), Ogre.Quaternion(1,0,0,0)));
+            line.setMaterialName('use_vertexcolor_only', Ogre.RGN_DEFAULT)
+            return line
+        elif tn.startswith('PointList'):
+            if thickness==0:
+                thickness=10
+
+            vp=RE.viewpoint()
+            normal=vp.vat-vp.vpos
+            normal.normalize();
+            normal.scale(-1)
+            if isinstance(data, m.vector3N):
+                data=data.matView()
+
+            mat='colormap'
+            if materialName and  len(materialName)>0:
+                if(materialName.startswith("Point")): # materials for ogre 1.0
+                    mat="colormap"; # resort to the default material
+                else:
+                    mat=materialName;
+
+            quads=_QuadList(node_name, normal, thickness);
+            quads.begin(data.rows(), mat);
+
+            if data.cols()==3:
+                d=data.vec3ViewCol(0)
+                for i in range(d.size()):
+                    quads.color_quad(i, m.vector3(1,1,1), d(i),1);
+            elif data.cols()==6:
+                color=data.vec3ViewCol(0)
+                d=data.vec3ViewCol(3)
+                for i in range(d.size()):
+                    quads.color_quad(i, color(i), d(i),color(i).z/thickness);
+            else:
+                assert(False)
+            quads.end();
+
+            return quads.manual;
+        else:
+            pdb.set_trace()
+        return line;
+
     def registerEntityScheduled(self, filename, destroyTime):
-        return self.registerObjectScheduled(RE.ogreSceneManager().createEntity(m.generateUniqueName(), filename), destroyTime)
-    def registerObjectScheduled(self, pObject, destroyTime):
+        return self._registerObjectScheduled(RE.ogreSceneManager().createEntity(m.generateUniqueName(), filename), destroyTime)
+
+    def registerObjectScheduled(self, destroyTime, typeName, materialName, data, thickness=0.7):
+        return self._registerObjectScheduled(self._createObject(m.generateUniqueName(), typeName, materialName, data, thickness), destroyTime);
+    def _registerObjectScheduled(self, pObject, destroyTime):
         pNode=self._createSceneNode(m.generateUniqueName())
-        pNode.attachObject(pObject)
+        if pObject is not None:
+            pNode.attachObject(pObject)
         self._scheduledObjects.append([pNode, destroyTime])
         return pNode
     def frameMove(self, fElapsedTime):
@@ -306,7 +519,7 @@ def path(path):
     return Path(path)
 
 def ogreVersion():
-    return 1
+    return 2  # actually 1.4.1 but not the old version 1
 def create_cache_folder(path: str | Path, suffix=".cached", create=True) -> Path:
     src = Path(path)
 
@@ -328,20 +541,85 @@ class Widget:
         self.title=title
         self.startSlot=spos
         self.endSlot=epos
+        if type_name=='Multi_Browser':
+            self._browser=[]
+            self._browserSelected=[]
+        elif type_name=='Check_Button':
+            self._value=False
+        elif type_name=='Input' or type_name=='Multiline_Input':
+            self._value=''
+        self._active=True
+    def activate(self):
+        self._active=True
+    def deactivate(self):
+        self._active=False
     def id(self):
         return self.uid
     def checkButtonValue(self, v=None):
         if v is None:
             return self._value
         else:
-            self._value=v
+            if v==1 or v==1.0:
+                self._value=True
+            elif v==0 or v==0.0:
+                self._value=False
+            else:
+                self._value=v
     def sliderRange(self,s=None, e=None):
         if s is None:
             return self._range or (0,1)
         else:
             self._range=(s,e)
+    def menuItems(self, items):
+        self._items=items
+    def menuValue(self, v=None):
+        if v is None:
+            return self._value
+        else:
+            self._value=v
+    def menuText(self):
+        item=self._items[self.menuValue()]
+        if isinstance(item, tuple):
+            return item[0]
+        return item
+    def menuSize(self, n):
+        self._items=[None]*n
+    def menuItem(self, i, text, shortcut=None):
+        if shortcut:
+            self._items[i]=(text, shortcut)
+        else:
+            self._items[i]=text
+    def browserSize(self):
+        return len(self._browser)
 
-Widget.sliderValue=Widget.checkButtonValue
+    def browserText(self, i_plus_one):  # one indexing
+        return self._browser[i_plus_one-1]
+    def browserDeselect(self):
+        for i in range(len(self._browser)):
+            self._browserSelected[i]=False
+    def browserSelect(self, i_plus_one):
+        if self.type_name!='Multi_Browser':
+            self.browserDeselect()
+        self._browserSelected[i_plus_one-1]=True
+    def browserRemove(self, i_plus_one):
+        self._browserSelected.erase(i_plus_one-1)
+        self._browser.erase(i_plus_one-1)
+    def browserClear(self):
+        self._browserSelected=[]
+        self._browser=[]
+
+    def browserAdd(self, v):
+        self._browser.append(v)
+        self._browserSelected.append(False)
+    def browserSelected(self, i_plus_one):
+        return self._browserSelected[i_plus_one-1]
+    def redraw(self):
+        pass
+
+# share the simplest code
+Widget.sliderValue=Widget.menuValue
+Widget.inputValue=Widget.menuValue
+
 
 class PythonExtendWin_member:
     def __init__(self, name: str):
@@ -350,11 +628,27 @@ class PythonExtendWin_member:
         global _luaEnv
         memberfunc=getattr(_luaEnv,self.name)
         return memberfunc(*args)
-class Layout:
+class FltkRenderer:
+    def renderWindowWidth(self):
+        global _window_data
+        return _window_data.window.getWidth()
+    def renderWindowHeight(self):
+        global _window_data
+        return _window_data.window.getHeight()
+    def screenToWorldRay(self, x,y,ray):
+        global _window_data
+        tx = float(1.0 / self.renderWindowWidth()) * x;
+        ty = float(1.0 / self.renderWindowHeight()) * y;
+
+        cam=_window_data.camera
+
+        ogre_ray=cam.getCameraToViewportRay(tx , ty);
+        ray.set(_toBaseP(ogre_ray.getOrigin()), _toBaseP(ogre_ray.getDirection()));
+
+class Layout(FltkRenderer): 
     def __init__(self):
         self.widgets=[]
         self.layoutElements={}
-
     # default member access functions
     def __getattr__(self, name):
         return PythonExtendWin_member(name)
@@ -366,7 +660,7 @@ class Layout:
         else:
             self.create('Button', title, on_screen_title)
     def addCheckButton(self, title, initialValue):
-        self.create('CheckButton', title, title)
+        self.create('Check_Button', title, title)
         self.widget(0).checkButtonValue(initialValue)
     def findWidget(self, uid):
         for i,v  in enumerate(self.widgets):
@@ -378,12 +672,30 @@ class Layout:
     def updateLayout(self):
         pass
             
-def drawWireBox(*args):
-    pass
-def drawTraj(*args):
-    pass
-def timedDrawTraj(*args):
-    pass
+def erase(type_name, name):
+    global _objectList, _activeBillboards
+
+    if _objectList is not None:
+        _objectList.erase(name)
+    _activeBillboards.pop(name, None)
+
+def drawTraj(objectlist,matrix,nameid, color='solidgreen', thickness=0, linetype='LineList'):
+    objectlist.registerObject(nameid, linetype, color , matrix, thickness )
+
+def timedDrawTraj(objectlist, time, matrix, color='solidgree', thickness=0, linetype='LineList'):
+    objectlist.registerObjectScheduled(time, linetype, color , matrix, thickness )
+
+def drawLine(objectList, startpos, endpos, nameid=None, color='green'):
+    lines=m.vector3N() 
+    lines.setSize(2)
+    lines(0).assign(startpos)
+    lines(1).assign(endpos)
+    assert(startpos.x==startpos.x)
+
+    if nameid is None:
+        nameid=RE.generateUniqueName()
+    drawBillboard( lines.matView(), nameid,color , 1.5 ,"BillboardLineList")
+
 def drawText(objectList, pos, nameid, vec3_color=None, height=None, text=None):
     mat=vec3_color or m.vector3(1,1,1)
     height=height or 8
@@ -393,8 +705,26 @@ def drawText(objectList, pos, nameid, vec3_color=None, height=None, text=None):
         objectList.registerLayoutElement(nameid+"_mt", "MovableText", nameid, mat, height, pos)
 def drawAxes(*args):
     pass
-def drawArrow(*args):
-    pass
+def drawArrowM(objectList, startpos, endpos, name, _thick=None, color=None):
+    if _thick is not None:
+        drawArrow(objectList, startpos*100, endpos*100, name, _thick*100, color)
+    else:
+        drawArrow(objectList, startpos*100, endpos*100, name, color)
+def drawArrow(objectlist, startpos, endpos, nameid, thick=10, color =None):
+
+    if color is not None:
+        node=objectlist.registerEntity(nameid, "arrow2.mesh", color)
+    else:
+        node=objectlist.registerEntity(nameid, "arrow2.mesh")
+
+    node.resetToInitialState()
+    dist=(startpos-endpos).length()
+    node.scale(thick/10, dist/50, thick/10)
+    q=m.quater()
+    q.axisToAxis(m.vector3(0,1,0), (endpos-startpos))
+    node.rotate(q)
+    node.translate(endpos)
+
 def drawSphere(objectList, pos, nameid, _materialName=None, _scale=None):
     if _scale is None:
         _scale=5 # 5 cm
@@ -427,11 +757,12 @@ class MeshToEntity:
         if mesh_name is None:
             mesh_name=m.generateUniqueName()
         self.mesh_name=mesh_name
+        self.mesh=mesh
 
         meshId=mesh_name
         if(Ogre.MeshManager.getSingleton().resourceExists(meshId)):
-            ptr=Ogre.MeshManager.getSingleton().getByName(meshId);
-            Ogre.MeshManager.getSingleton().remove(ptr);
+            #ptr=Ogre.MeshManager.getSingleton().getByName(meshId);
+            Ogre.MeshManager.getSingleton().remove(meshId);
 
         self.meshToEntity_cpp=m.MeshToEntity( mesh, mesh_name, buildEdgeList, dynamicUpdate, useNormal,useTexCoord, useColor)
 
@@ -442,7 +773,7 @@ class MeshToEntity:
             manual = scene_mgr.createManualObject(meshId+"_manual")
             manual.setDynamic(False)
 
-            # ⭐ 중요: 미리 capacity 예약
+            # reserve capacity 
             manual.estimateVertexCount(mesh.numVertex())
             manual.estimateIndexCount(mesh.numFace()*3)
 
@@ -488,8 +819,7 @@ class MeshToEntity:
                 buffers.append((vertices.sub(0,0,currentColumn, currentColumn+3).array.astype(np.half), Ogre.VET_HALF3, Ogre.VES_NORMAL,0))
                 currentColumn+=3
             if useTexCoord:
-                buffers.append((vertices.sub(0,0,currentColumn, currentColumn+1).array.astype(np.half), Ogre.VET_HALF3, Ogre.VES_TEXTURE_COORDINATES,0))
-                buffers.append((vertices.sub(0,0,currentColumn+1, currentColumn+2).array.astype(np.half), Ogre.VET_HALF3, Ogre.VES_TEXTURE_COORDINATES,1))
+                buffers.append((vertices.sub(0,0,currentColumn, currentColumn+2).array.astype(np.half), Ogre.VET_HALF2, Ogre.VES_TEXTURE_COORDINATES,0))
                 currentColumn+=2
 
             #usage=Ogre.HBU_CPU_ONLY
@@ -561,9 +891,16 @@ class MeshToEntity:
     def getLastCreatedEntity():
         return self.entity
     def updatePositions(self, vertices=None):
-        pass
+        if hasattr(self.meshToEntity_cpp, 'getRawData'):
+            sub=self.mMesh.getSubMesh(0)
+            vertices=m.matrixn()
+            indices=m.intvectorn()
+            numSubMeshes=self.meshToEntity_cpp.getRawData(self.mesh, 0, vertices, indices)
+            vertexBuffer=sub.vertexData.vertexBufferBinding.getBuffer(0)
+            vertexBuffer.writeData(0, vertexBuffer.getSizeInBytes(), vertices.sub(0,0,0,3).array.astype(np.half))
+
     def updatePositionsAndNormals(self):
-        pass
+        self.updatePositions()
 
 def drawCylinder(objectlist, tf, nameid, cylinderSize, skinScale=None, material=None):
     global _cacheCylinderMeshes
@@ -596,7 +933,67 @@ def drawCylinder(objectlist, tf, nameid, cylinderSize, skinScale=None, material=
     tfg.setPosition(tf.translation*skinScale)
     tfg.setOrientation(tf.rotation)
 
+def _createWireBox(boxSize, skinScale):
+    mesh=m.vector3N(12*2)
+    fb=boxSize*skinScale*0.5
+    c=0
+    mesh(c).assign(m.vector3(fb.x, fb.y, fb.z)) 
+    c=c+1
+    mesh(c).assign(m.vector3(-fb.x, fb.y, fb.z)) 
+    c=c+1
+    mesh(c).assign(m.vector3(fb.x, -fb.y, fb.z)) 
+    c=c+1
+    mesh(c).assign(m.vector3(-fb.x, -fb.y, fb.z)) 
+    c=c+1
+    mesh(c).assign(m.vector3(fb.x, fb.y, fb.z)) 
+    c=c+1
+    mesh(c).assign(m.vector3(fb.x, -fb.y, fb.z)) 
+    c=c+1
+    mesh(c).assign(m.vector3(-fb.x, fb.y, fb.z)) 
+    c=c+1
+    mesh(c).assign(m.vector3(-fb.x, -fb.y, fb.z)) 
+    c=c+1
 
+    mesh(c).assign(m.vector3(fb.x, fb.y, -fb.z)) 
+    c=c+1
+    mesh(c).assign(m.vector3(-fb.x, fb.y,- fb.z)) 
+    c=c+1
+    mesh(c).assign(m.vector3(fb.x, -fb.y, -fb.z))
+    c=c+1
+    mesh(c).assign(m.vector3(-fb.x, -fb.y,- fb.z)) 
+    c=c+1
+    mesh(c).assign(m.vector3(fb.x, fb.y, -fb.z)) 
+    c=c+1
+    mesh(c).assign(m.vector3(fb.x, -fb.y,- fb.z)) 
+    c=c+1
+    mesh(c).assign(m.vector3(-fb.x, fb.y,- fb.z)) 
+    c=c+1
+    mesh(c).assign(m.vector3(-fb.x, -fb.y,- fb.z)) 
+    c=c+1
+
+    mesh(c).assign(m.vector3(fb.x, fb.y, fb.z)) 
+    c=c+1
+    mesh(c).assign(m.vector3(fb.x, fb.y, -fb.z)) 
+    c=c+1
+    mesh(c).assign(m.vector3(fb.x, -fb.y, fb.z)) 
+    c=c+1
+    mesh(c).assign(m.vector3(fb.x, -fb.y, -fb.z)) 
+    c=c+1
+    mesh(c).assign(m.vector3(-fb.x, fb.y, fb.z)) 
+    c=c+1
+    mesh(c).assign(m.vector3(-fb.x, fb.y, -fb.z)) 
+    c=c+1
+    mesh(c).assign(m.vector3(-fb.x, -fb.y, fb.z)) 
+    c=c+1
+    mesh(c).assign(m.vector3(-fb.x, -fb.y, -fb.z)) 
+    c=c+1
+    return mesh
+
+def drawWireBox(objectlist, tf, nameid, boxSize, skinScale=100, material=None, thickness=1.5):
+    mesh=_createWireBox(boxSize, skinScale)
+    mesh.rotate(tf.rotation)
+    mesh.translate(tf.translation*skinScale)
+    drawBillboard( mesh.matView(), nameid,material or 'solidblue', thickness or 1.5 ,"BillboardLineList")
 def drawBox(objectlist, tf, nameid, boxSize, skinScale=None, material=None):
     global _cacheBoxMeshes
     if not skinScale :
@@ -681,6 +1078,29 @@ def namedDraw(typename,*args):
         nameid=p[2]
         if len(p)>4:
             pos=pos*p[3]
+	#elseif typename=='Coordinate' then
+	#	local p={...}
+	#	pos=p[1].translation*100 + (p[3] or vector3(0,0,0))*100
+	#	nameid=p[2]
+	#elseif typename=="Line" or typename=='Line2' then
+	#	local p={...}
+	#	pos=p[1]
+	#	nameid=p[3]
+	#	if p[4] then color=p[4] end
+	#elseif typename=="Arrow" then
+	#	local p={...}
+	#	pos=p[1]
+	#	nameid=p[3]
+	#elseif typename=='Arrow2' then
+	#	local p={...}
+	#	pos=p[2]
+	#	nameid=p[3]
+	#	typename='Arrow'
+	#elseif typename=="registerObject" then
+	#	local p={...}
+	#	pos=p[4][0]
+	#	nameid=p[1]
+	#end
     if pos :
         if 'ed' in color:
             mat=m.vector3(0.7,0,0)
@@ -691,12 +1111,58 @@ def namedDraw(typename,*args):
         fontSize=8
         _objectList.registerLayoutElement(nameid+"_mt", "MovableText", nameid, mat,fontSize, pos+m.vector3(0,15.0/8.0*fontSize,0))
 
-def drawBillboard(datapoints, nameid, material, thickness, billboard_type):
-    pass
+def drawBillboard(datapoints, *args):
+    global _activeBillboards
+    info= ( datapoints.copy(), *args)
+    _activeBillboards[args[0]]=info
+    if isinstance(datapoints, m.vector3N):
+        draw('Traj', datapoints.matView(), *args)
+    else:
+        draw('Traj', datapoints, *args)
+
+def drawPoints(objectList, vec_or_mat, name, materialName, thickness =1):    
+    if isinstance(vec_or_mat, m.vectorn):
+        mat=m.matrixn(int(vec.size()/3), 3)
+        for i in range(mat.rows()):
+            mat.row(i).assign(vec.toVector3(3*i))
+        drawBillboard(mat, name, materialName, thickness , 'QuadListV'  )
+    elif hasattr(vec_or_mat, 'matView'):
+        drawBillboard(vec_or_mat.matView(), name, materialName, thickness , 'QuadListV'  )
+    else:
+        drawBillboard(vec_or_mat, name, materialName, thickness , 'QuadListV'  )
+
 
 
 def dummyOnCallback(w, userData):
     pass
+def checkedOnCallback(w, userData):
+    try:
+        __main__.onCallback(w, userData)
+    except Exception as e:
+        print(e)
+        print(w.type_name)
+        traceback.print_exc()  # optional, print the stack
+        pdb.post_mortem(e.__traceback__)  # drop into pdb at the original exception
+def checkedHandleRendererEvent(ev, x, y):
+    global _prevMouse
+    if x!=_prevMouse[0]  or y!=_prevMouse[1] or ev=='PUSH' or ev=='RELEASE':
+        try:
+            button=_prevMouse[2]
+            if ev=='PUSH':
+                if imgui.IsMouseClicked(0): 
+                    button=1
+                elif imgui.IsMouseClicked(1):
+                    button=2
+                else:
+                    button=3
+            __main__.handleRendererEvent(ev, button, x, y)
+            _prevMouse=(x,y, button)
+        except Exception as e:
+            print(e)
+            print(ev)
+            traceback.print_exc()  # optional, print the stack
+            pdb.post_mortem(e.__traceback__)  # drop into pdb at the original exception
+
 def _world_to_screen(world_pos):
     global _window_data
     camera=_window_data.camera
@@ -725,7 +1191,7 @@ def _world_to_screen(world_pos):
 
     return int(screen_x), int(screen_y), True
 def ui_callback(): # handle ui events and draw texts
-    global _layout, _mouseInfo, _window_data,_softKill
+    global _layout, _mouseInfo, _window_data,_softKill,_drawOutput,_outputs
     # This function is called every frame to draw your custom ImGui elements
 
     #imgui.NewFrame()
@@ -746,9 +1212,9 @@ def ui_callback(): # handle ui events and draw texts
     # ImGui UI
     # -----------------------------
     if imgui.Begin("Menu"):
-    
+        imgui.SetWindowSize(imgui.ImVec2(300, 500));
         if hasattr(__main__,'onCallback'):
-            onCallback=__main__.onCallback
+            onCallback=checkedOnCallback
         else:
             onCallback=dummyOnCallback
         try:
@@ -758,14 +1224,66 @@ def ui_callback(): # handle ui events and draw texts
                         onCallback(v, None)
                 elif v.type_name=='Check_Button':
                     changed,value=imgui.Checkbox(v.title or v.uid, v.checkButtonValue())
-                    if changed:
+                    if changed and v._active:
                         v.checkButtonValue(value)
                         onCallback(v, None)
                 elif v.type_name=='Value_Slider':
                     changed, my_value = imgui.SliderFloat(v.title or v.uid, v.sliderValue(), *v.sliderRange())
-                    if changed:
+                    if changed and v._active:
                         v.sliderValue(my_value)
                         onCallback(v, None)
+                elif v.type_name=='Multiline_Input':
+                    imgui.Separator();
+                    imgui.Text(v.title or v.uid) 
+
+                    changed= imgui.InputTextMultiline(
+                        '',
+                        v.inputValue(),
+                        1024                         # buffer size,
+                    )
+                    if changed and v._active:
+                        pass # todo: there seems to be no way to get the text back.
+                        v.inputValue(text)
+                        onCallback(v, None)
+                elif v.type_name=='Multi_Browser':
+
+                        
+                    #if imgui.Begin(v.title or v.uid):
+                    #if False:
+                    #imgui.BeginChild(v.title or v.uid, imgui.ImVec2(200, 150), True):
+                    if imgui.BeginListBox(v.title or v.uid, imgui.ImVec2(0, 120)):
+
+                        assert(len(v._browser)==len(v._browserSelected))
+                        for i in range(v.browserSize()):
+                            if (imgui.Selectable(v.browserText(i+1), v.browserSelected(i+1))):
+                                v._browserSelected[i]=not v._browserSelected[i]
+                                onCallback(v, None)
+                        imgui.EndListBox()
+                        #imgui.EndChild()
+                         #imgui.End()
+                elif v.type_name=='Choice':
+                    #if imgui.BeginMainMenuBar():  # Main menu bar at the top
+                    if True:
+                        if imgui.BeginMenu(v.title or v.uid, True):  # Menu with items
+                            assert(v._items is not None)
+                            assert(isinstance(v._items, list))
+                            for ii, vv in enumerate(v._items):
+                                if isinstance(vv, tuple):
+                                    shortcut=vv[ 1]
+                                    shortcut=shortcut[:-1]+shortcut[:-1].upper()
+                                    clicked_new= imgui.MenuItem(vv[0], shortcut, v.menuValue()==ii)
+                                    if clicked_new:
+                                        print("New clicked")
+                                else:
+                                    clicked_new= imgui.MenuItem(vv, None, v.menuValue()==ii)
+                                    if clicked_new:
+                                        v.menuValue(ii)
+                                        onCallback(v, None)
+
+                            #imgui.separator()  # Draw a separator line
+                            imgui.EndMenu()  # End "File" menu
+                        #imgui.Text('    :'+v.menuText())
+                        #imgui.EndMainMenuBar()  # End main menu bar
                 else:
                     print(v.type_name, 'not implemented yet')
 
@@ -786,57 +1304,87 @@ def ui_callback(): # handle ui events and draw texts
     altPressed = imgui.GetIO().KeyAlt;
     ctrlPressed = imgui.GetIO().KeyCtrl;
     shiftPressed = imgui.GetIO().KeyShift;
-    #imgui.Text(f"pressed:{altPressed,ctrlPressed, shiftPressed}")
-
+    imgui.Separator();
     imgui.Text("press q to quit.")
+    #imgui.Text(f"alt:{altPressed}, ctrl:{ctrlPressed}, shift:{shiftPressed}")
+
+    changed,value=imgui.Checkbox('show debug output', _drawOutput)
+    if changed:
+        _drawOutput=value
+    if value:
+        if imgui.Begin("debug output"):
+            imgui.SetWindowSize(imgui.ImVec2(300, 500));
+            imgui.Text('use  RE.output("msg key", "msg")')
+            imgui.Separator();
+            for i, key in enumerate(sorted(_outputs)):
+                imgui.Text(f"{key}\t{_outputs[key]}")
+
+            imgui.End()
+
+    if _mouseInfo is None:
+        _mouseInfo=lua.Table()
+        _mouseInfo.drag=False
+    released=False
+    if imgui.IsMouseReleased(0) or imgui.IsMouseReleased(1) or imgui.IsMouseReleased(2):
+        _mouseInfo.drag=False
+        released=True
+
     if not hovered:
-        #imgui.IsWindowHovered(  ) and not imgui.IsItemHovered():
-        # Mouse info
-        mouse_pos = imgui.GetMousePos()
-        if _mouseInfo is None:
-            _mouseInfo=lua.Table()
-            _mouseInfo.drag=False
+            #imgui.IsWindowHovered(  ) and not imgui.IsItemHovered():
+            # Mouse info
+            mouse_pos = imgui.GetMousePos()
 
-        _mouseInfo.pos=m.vector3(mouse_pos.x, mouse_pos.y,0)
-        #imgui.Text(f"Mouse position: ({(mouse_pos.x, mouse_pos.y)})")
-        width=_window_data.window.getWidth()
-        height=_window_data.window.getHeight()
+            _mouseInfo.pos=m.vector3(mouse_pos.x, mouse_pos.y,0)
+            #imgui.Text(f"Mouse position: ({(mouse_pos.x, mouse_pos.y)})")
+            width=_window_data.window.getWidth()
+            height=_window_data.window.getHeight()
 
-        if imgui.IsMouseClicked(0) or imgui.IsMouseClicked(1) or imgui.IsMouseClicked(2):
-            _mouseInfo.downMousePos=m.vector3(mouse_pos.x, mouse_pos.y,0)
-            _mouseInfo.drag=True
-
-        if imgui.IsMouseReleased(0) or imgui.IsMouseReleased(1) or imgui.IsMouseReleased(2):
-            _mouseInfo.drag=False
-
-        if _mouseInfo.downMousePos is not None and _mouseInfo.drag:
-            dx=_mouseInfo.pos- _mouseInfo.downMousePos
-            if dx.length()>0.5:
-                m_zoom=1
-                m_scale=300 
-                panning= imgui.IsMouseDown(2) or (imgui.IsMouseDown(0) and altPressed)
-                if panning:
-                    x=-dx.x/(width/2.0)
-                    y=dx.y/(height/2.0)
-                    x*=(m_scale/m_zoom);
-                    y*=(m_scale/m_zoom);
-                    if hasattr(RE.viewpoint(), 'PanRight'):
-                        RE.viewpoint().PanRight(x);
-                        RE.viewpoint().PanUp(-y);
-                elif imgui.IsMouseDown(0) : 
-                    RE.viewpoint().TurnRight(-(dx.x/width))
-                    RE.viewpoint().TurnUp(dx.y/(height/2.0))
-                else:
-                    dy= dx.y/(height/2.0)
-                    dy*=m_scale
-
-                    RE.viewpoint().ZoomOut(-dy)
-
-                if hasattr(RE.viewpoint(),"CheckConstraint"):
-                    RE.viewpoint().CheckConstraint();
-                else:
-                    RE.viewpoint().update()
+            hasHandler=hasattr(__main__,'handleRendererEvent')
+            if imgui.IsMouseClicked(0) or imgui.IsMouseClicked(1) or imgui.IsMouseClicked(2):
                 _mouseInfo.downMousePos=m.vector3(mouse_pos.x, mouse_pos.y,0)
+                _mouseInfo.drag=True
+                if shiftPressed:
+                    if hasHandler:
+                        checkedHandleRendererEvent("PUSH", int(mouse_pos.x), int(mouse_pos.y))
+                    else:
+                        shiftPressed=False
+            elif shiftPressed and hasHandler:
+                if released:
+                    checkedHandleRendererEvent("RELEASE", int(mouse_pos.x), int(mouse_pos.y))
+                elif _mouseInfo.drag:
+                    checkedHandleRendererEvent("DRAG", int(mouse_pos.x), int(mouse_pos.y))
+                else:
+                    checkedHandleRendererEvent("MOVE", int(mouse_pos.x), int(mouse_pos.y))
+
+
+            if not shiftPressed and _mouseInfo.downMousePos is not None and _mouseInfo.drag:
+                dx=_mouseInfo.pos- _mouseInfo.downMousePos
+                if dx.length()>0.5:
+                    m_zoom=1
+                    m_scale=300 
+                    panning= imgui.IsMouseDown(2) or (imgui.IsMouseDown(0) and altPressed)
+                    if panning:
+                        x=-dx.x/(width/2.0)
+                        y=dx.y/(height/2.0)
+                        x*=(m_scale/m_zoom);
+                        y*=(m_scale/m_zoom);
+                        if hasattr(RE.viewpoint(), 'PanRight'):
+                            RE.viewpoint().PanRight(x);
+                            RE.viewpoint().PanUp(-y);
+                    elif imgui.IsMouseDown(0) : 
+                        RE.viewpoint().TurnRight(-(dx.x/width))
+                        RE.viewpoint().TurnUp(dx.y/(height/2.0))
+                    else:
+                        dy= dx.y/(height/2.0)
+                        dy*=m_scale
+
+                        RE.viewpoint().ZoomOut(-dy)
+
+                    if hasattr(RE.viewpoint(),"CheckConstraint"):
+                        RE.viewpoint().CheckConstraint();
+                    else:
+                        RE.viewpoint().update()
+                    _mouseInfo.downMousePos=m.vector3(mouse_pos.x, mouse_pos.y,0)
     else:
         _mouseInfo =None
 
@@ -931,8 +1479,17 @@ def createMainWin(*args):
     RE.createMainWin()
 
     _luaEnv=m.getPythonWin()
-    m.getPythonWin=_getPythonWin  # override
-
+    # swap console versions to ogre-python versions
+    # (we need to override only those functions used in the RE.SceneGraph class.)
+    m.getPythonWin=_getPythonWin      
+    m.FltkRenderer=_getPythonWin
+    m.getSceneNode=getSceneNode
+    m.renderOneFrame=renderOneFrame
+    RE.output=output
+    RE.draw=draw
+    RE.erase=erase
+    RE.ogreSceneManager=ogreSceneManager
+    RE.ogreSceneManager=ogreSceneManager
     if not os.path.exists('./work'):
         print("Ogre3D resource folder ('work') not found. Creating it from GitHub taesoobear/IPCDNNwalk/work.")
         cache_root = Path.home() / '.cache'
@@ -957,7 +1514,16 @@ def createMainWin(*args):
     ohi.user_resource_locations.add("work/taesooLib/media/materials/textures")
     if os.path.exists('./media'):
         ohi.user_resource_locations.add("media")
-    ohi._init_ogre(window_name, imsize)
+
+
+    if False:
+        ohi._init_ogre(window_name, imsize)
+    else:
+        ohi._ctx = _Application()
+        ohi._ctx.name = window_name
+        ohi._ctx.imsize = imsize
+        ohi._ctx.initApp()
+
     rgm = Ogre.ResourceGroupManager.getSingleton()
     #rgm.addResourceLocation("work/taesooLib/media/RTShaderLib", "FileSystem", "OgreInternal", True)
     #rgm.addResourceLocation("work/taesooLib/media/Main", "FileSystem", "OgreInternal", True)
@@ -988,15 +1554,15 @@ def viewpoint():
 
 def ogreSceneManager():
     global _window_data
-    return _window_data.scn_mgr
+    return SceneManagerWrap(_window_data.scn_mgr)
 
-RE.ogreSceneManager=ogreSceneManager
 
+_lastCamPos=Ogre.Vector3(1e5,0,0)
 def renderOneFrame(check):
-    global start_time ,_softKill
+    global _start_time ,_softKill
     ctime=time.time()
-    elapsed =  ctime- start_time
-    start_time=ctime
+    elapsed =  ctime- _start_time
+    _start_time=ctime
     if check:
         if elapsed>1.0/30:
             elapsed=1.0/30
@@ -1005,6 +1571,18 @@ def renderOneFrame(check):
 
         for i, v in enumerate(_frameMoveObjects):
             v.frameMove(elapsed)
+
+        global _window_data, _lastCamPos, _cameraEventReceivers,_activeBillboards
+        cam = _window_data.camera
+        camPos=cam.getDerivedPosition()
+        camDist=(camPos-_lastCamPos).squaredLength()
+        if camDist>1:
+            for i, v in enumerate(_cameraEventReceivers):
+                v._update()
+            for k, v in _activeBillboards.items():
+                draw('Traj',*v)
+            _lastCamPos=Ogre.Vector3(camPos.x, camPos.y, camPos.z)
+
 
         _sceneGraphs=RE._sceneGraphs
         if _sceneGraphs is not None:
@@ -1033,6 +1611,8 @@ def _tempFunc(v):
     return Ogre.Quaternion(v.w, v.x, v.y, v.z)
 m.quater._toOgre=_tempFunc
 
+def _toBaseP(v):
+    return m.vector3(v.x, v.y, v.z)
 def _updateView():
     global _window_data
     cam=_window_data.camera
@@ -1228,7 +1808,7 @@ if True:
 
         name_to_idx={}
         while True:
-            line=re.sub(b"\s+", b"", f.readline().strip()) # remove spaces
+            line=re.sub(br"\s+", b"", f.readline().strip()) # remove spaces
 
             name_to_idx[line]=NUM_PROPS
             if line==b"end_header":
@@ -1326,7 +1906,6 @@ if True:
 
 
 def _tempFunc(mesh, materialName, _optionalNodeName=None, _optionalDoNotUseNormal=None):
-    lua.require("Kinematics/meshTools")
     if _optionalNodeName is None:
         _optionalNodeName='node_name'
 
@@ -1343,9 +1922,105 @@ def _tempFunc(mesh, materialName, _optionalNodeName=None, _optionalDoNotUseNorma
     meshToEntity=MeshToEntity(mesh, 'meshName'+_optionalNodeName, False, True, not _optionalDoNotUseNormal, useTexCoord, useColor)
     entity=meshToEntity.createEntity('entityName'+_optionalNodeName , materialName or "CrowdEdit/Terrain1")
     if entity :
+        removeEntity(_optionalNodeName)
         node=ogreRootSceneNode().createChildSceneNode(_optionalNodeName)
         node.attachObject(entity)
         return meshToEntity,node
     return None
 m.Mesh.drawMesh=_tempFunc # overwrite
-m.renderOneFrame=renderOneFrame
+
+def turnOffSoftShadows():
+    ogreSceneManager().setShadowTechnique(Ogre.SHADOWTYPE_NONE);
+
+
+
+class _QuadList:
+    def __init__(self, node_name, normal, width):
+        self.normal=normal
+        self.width=width
+        scene_mgr=ogreSceneManager()
+
+        name=node_name+"_manual"
+        if (scene_mgr.hasManualObject(name)):
+            manual = sceneMgr.getManualObject(name);
+            manual.clear()  # 기존 geometry 제거 
+        else:
+            manual = scene_mgr.createManualObject()
+        manual.setDynamic(False)
+        self.manual=manual
+    def begin(self, n, materialName='BaseWhiteNoLigthting'):
+        manual=self.manual
+        manual.estimateVertexCount(n*6)
+
+        axis1=m.vector3()
+        axis2=m.vector3();
+        qy=m.quater()
+        vp=RE.viewpoint()
+        mNormal=self.normal
+        halfWidth=self.width/2;
+        qy.setAxisRotation(m.vector3(0,1,0), m.vector3(0,0,1), vp.vpos-vp.vat)
+        axis1.cross(mNormal, qy*m.vector3(0,0,1));
+        if(axis1.length()<0.01):
+            axis1.cross(mNormal, qy*m.vector3(1,0,0));
+
+        axis1.normalize();
+        axis2.cross(axis1, mNormal);
+
+        pos=[None]*4
+        pos[0]=axis1*halfWidth+axis2*halfWidth;
+        pos[1]=axis1*halfWidth+axis2*-halfWidth;
+        pos[2]=axis1*-halfWidth+axis2*-halfWidth;
+        pos[3]=axis1*-halfWidth+axis2*halfWidth;
+
+        texCoord=[None]*4
+        texCoord[0]=m.vector3(1, 0, 1);
+        texCoord[1]=m.vector3(1, 0, 0);
+        texCoord[2]=m.vector3(0, 0, 0);
+        texCoord[3]=m.vector3(0, 0, 1);
+
+        self.pos=pos
+        self.texCoord=texCoord
+        self.c=0
+        manual.begin(materialName, Ogre.RenderOperation.OT_TRIANGLE_LIST)
+    def end(self):
+        self.manual.end()
+    def quad(self, i, mpos):
+        assert(i==self.c)
+        self.c+=1
+        pos=self.pos
+        texCoord=self.texCoord
+        manual=self.manual
+
+        # lower triangle
+        for j in range(3):
+            pp=pos[j]+mpos;
+            manual.position(pp.x, pp.y, pp.z)
+            manual.textureCoord(texCoord[j].x, texCoord[j].z)
+
+        # upper triangle
+        for index in range(3):
+            j=(index+2)%4;
+            pp=pos[j]+mpos;
+            manual.position(pp.x, pp.y, pp.z)
+            manual.textureCoord(texCoord[j].x, texCoord[j].z)
+
+    def color_quad(self, i, color, mpos, width):
+        assert(i==self.c)
+        self.c+=1
+        pos=self.pos
+        texCoord=self.texCoord
+        manual=self.manual
+
+        # lower triangle
+        for j in range(3):
+            pp=pos[j]*width+mpos;
+            manual.position(pp.x, pp.y, pp.z)
+            manual.textureCoord(color.x+texCoord[j].x*0.01, 1-color.y+texCoord[j].z*0.01)
+
+        # upper triangle
+        for index in range(3):
+            j=(index+2)%4;
+            pp=pos[j]*width+mpos;
+            manual.position(pp.x, pp.y, pp.z)
+            manual.textureCoord(color.x+texCoord[j].x*0.01, 1-color.y+texCoord[j].z*0.01)
+

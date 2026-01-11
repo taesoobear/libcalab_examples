@@ -5,6 +5,8 @@ import numpy as np
 from libcalab import m, lua, control
 import media.rendermodule_ogre as RE 
 
+RE.useFSAA=True
+
 def drawAll():
     if True:
         # draw mesh

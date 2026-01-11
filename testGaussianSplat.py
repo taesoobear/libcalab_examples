@@ -5,6 +5,7 @@ import pdb, math
 
 
 this=RE.createMainWin()
+RE.turnOffSoftShadows()  # For faster rendering, since libcalab_examples.git uses stencil shadows, which are slow.
 
 scene_manager=RE.ogreSceneManager()
 
@@ -25,6 +26,5 @@ lego.node.translate(0,50,0)
 
 while True:
 
-    lego.update()
     if not RE.renderOneFrame(True): break
 
