@@ -22,6 +22,7 @@ MacOS (ARM) and linux (AMD64) with python 3.12 only.
 
 # How to run examples
 =
+The current latest ogre-python 14.5.0 doesn't work. 
 ```
    pip3 install --upgrade libcalab
    pip3 install ogre-python==14.4.1
