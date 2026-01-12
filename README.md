@@ -24,7 +24,8 @@ MacOS (ARM) and linux (AMD64) with python 3.12 only.
 =
 ```
    pip3 install --upgrade libcalab
-  pip3 install numpy torch easydict ogre-python
+   pip3 install ogre-python==14.4.1
+  pip3 install numpy torch easydict 
   python3 SceneEditor.py
 ```
 
