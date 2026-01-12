@@ -20,6 +20,10 @@ def rotateY(scene_item, elapsedTime):
     # without bbox rotation and events
     scene_item.localOrientation=m.quater(1*elapsedTime, m.vector3(0,1,0))*scene_item.localOrientation
 
+def rotateY_splat(scene_item, elapsedTime):
+    rotateY(scene_item, elapsedTime)
+    scene_item.splat._update()  # splat is automatically updated only when camera changes. so do this manually when necessary.
+
 def sceneEventFunction(scene_item, ev):
     print(scene_item.nodeId, ev)
 
@@ -39,6 +43,11 @@ def onCallback(w,userData):
             scene_item.material='red'
             scene_item.handleFrameMove=rotateY
             scene_item.eventFunction=sceneEventFunction
+        elif id=='create lego':
+            scene_item=sceneGraph.addGaussianSplat('lego.mesh', localScale=50, localOrientation=m.quater(math.radians(-90), m.vector3(1,0,0)))
+        elif id=='create rotating lego':
+            scene_item=sceneGraph.addGaussianSplat('lego.mesh', localScale=50, localOrientation=m.quater(math.radians(-90), m.vector3(1,0,0)))
+            scene_item.handleFrameMove=rotateY_splat
 
     elif sceneGraph.onCallback(w, userData):
         pass
@@ -53,7 +62,7 @@ this=RE.createMainWin(sys.argv)
 this.addText("try shift-L-drag \nor shift-R-drag")
 
 this.create("Choice", "global operations","global operations")
-this.widget(0).menuItems(["global operations", 'create arrow', 'create sphere', 'create rotating sphere'])
+this.widget(0).menuItems(["global operations", 'create arrow', 'create sphere', 'create lego', 'create rotating lego', 'create rotating sphere'])
 this.widget(0).menuValue(0)
 
 

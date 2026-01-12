@@ -38,6 +38,7 @@ _outputs={} # debug outputs
 _drawOutput=False
 
 SceneGraph=RE.SceneGraph
+
 def output(key, *args):
     global _outputs
     _outputs[key]=str(args)
@@ -61,68 +62,82 @@ class _Application(ohi._Application):
         self.getRoot().setRenderSystem(rs)
         self.getRoot().saveConfig()
         return True
+
+_gs_first=True
 class GaussianSplat:
-    def __init__(self, entity_name, filename):
+    def _createPositions(self, mesh):
+        sub = mesh.getSubMesh(0);
+        vertexBuffer = sub.vertexData.vertexBufferBinding.getBuffer(0);
+        numVertices = sub.vertexData.vertexCount;
+        vdecl = sub.vertexData.vertexDeclaration
+        idata = sub.indexData;
+        self.idata=idata
+        import ctypes
+        # Find POSITION element
+        pos_elem = vdecl.findElementBySemantic(Ogre.VES_POSITION)
+        mPositions=np.zeros((numVertices,3)).astype(np.half)
+        ptr=vertexBuffer.lock(Ogre.HardwareBuffer.HBL_READ_ONLY)
+        print(vertexBuffer.getSizeInBytes()/ numVertices)
+
+        u16_ptr = ctypes.cast(int(ptr), ctypes.POINTER(ctypes.c_uint16))
+
+        # zero-copy uint16 array
+        raw = np.ctypeslib.as_array(
+            u16_ptr, shape=(numVertices, 3)
+        )
+
+        # reinterpret uint16 → float16
+        mPositions = raw.view(np.float16).copy()
+
+        vertexBuffer.unlock()
+
+        self.positions=mPositions
+    def _createIndices(self, mesh):
+        self._createPositions(mesh)
+        # get positions for sorting
+        sub = mesh.getSubMesh(0);
+        idata=sub.indexData
+        vertexBuffer = sub.vertexData.vertexBufferBinding.getBuffer(0);
+        numVertices = sub.vertexData.vertexCount;
+        # create index buffer
+        idata.indexCount = numVertices;
+        mIndexBuffer = vertexBuffer.getManager().createIndexBuffer(Ogre.HardwareIndexBuffer.IT_32BIT, numVertices, Ogre.HBU_CPU_TO_GPU);
+        idata.indexBuffer = mIndexBuffer;
+
+        indices_np= np.arange(numVertices, dtype=np.int32)
+        buf = idata.indexBuffer.lock(
+            0,
+            numVertices * idata.indexBuffer.getIndexSize(),
+            Ogre.HardwareBuffer.HBL_DISCARD
+        )
+        ctypes.memmove(int(buf), indices_np.ctypes.data, indices_np.nbytes)
+        idata.indexBuffer.unlock()
+
+    def __init__(self, node_name, filename, parentSceneNode=None):
         global _cameraEventReceivers
         _cameraEventReceivers.append(self)
+        entity_name="_entity_"+node_name
         if filename[-5:]=='.mesh':
-            self.entity=ogreSceneManager().createEntity(entity_name, filename)
+            if(Ogre.MeshManager.getSingleton().resourceExists(filename)):
+                srcMesh=Ogre.MeshManager.getSingleton().getByName(filename)
+                clonedMesh = srcMesh.clone(entity_name+"MyMesh_Clone", "General");
+                self._createPositions(clonedMesh)
+                self.entity=ogreSceneManager().createEntity(entity_name, clonedMesh)
+            else:
+                self.entity=ogreSceneManager().createEntity(entity_name, filename)
+                self._createIndices(self.entity.getMesh())
         elif filename[-4:]=='.ply':
-            self.mesh=ply_to_mesh(filename+"_converted.mesh", filename)
-            self.entity= ogreSceneManager().createEntity( entity_name,filename+"_converted.mesh")
+            self.mesh=ply_to_mesh(node_name+"_converted_mesh", filename)
+            self.entity= ogreSceneManager().createEntity( entity_name,node_name+"_converted_mesh")
         else:
             assert(False)
 
         rootnode=RE.ogreRootSceneNode()
-        self.node=rootnode.createChildSceneNode(entity_name+"_node")
+        if parentSceneNode is not None:
+            rootnode=parentSceneNode
+        self.node=rootnode.createChildSceneNode(node_name)
         self.node.attachObject(self.entity)
-        if True:
-            lego_entity=self.entity
-            # get positions for sorting
-            sub = lego_entity.getMesh().getSubMesh(0);
-            vertexBuffer = sub.vertexData.vertexBufferBinding.getBuffer(0);
-            numVertices = sub.vertexData.vertexCount;
-            vdecl = sub.vertexData.vertexDeclaration
-
-            import ctypes
-            # Find POSITION element
-            pos_elem = vdecl.findElementBySemantic(Ogre.VES_POSITION)
-            mPositions=np.zeros((numVertices,3)).astype(np.half)
-            ptr=vertexBuffer.lock(Ogre.HardwareBuffer.HBL_READ_ONLY)
-            print(vertexBuffer.getSizeInBytes()/ numVertices)
-
-            u16_ptr = ctypes.cast(int(ptr), ctypes.POINTER(ctypes.c_uint16))
-
-            # zero-copy uint16 array
-            raw = np.ctypeslib.as_array(
-                u16_ptr, shape=(numVertices, 3)
-            )
-
-            # reinterpret uint16 → float16
-            mPositions = raw.view(np.float16).copy()
-
-            vertexBuffer.unlock()
-
-            self.positions=mPositions
-
-            if True:
-                # create index buffer
-                idata = sub.indexData;
-                self.idata=idata
-                idata.indexCount = numVertices;
-                mIndexBuffer = vertexBuffer.getManager().createIndexBuffer(Ogre.HardwareIndexBuffer.IT_32BIT, numVertices, Ogre.HBU_CPU_TO_GPU);
-                idata.indexBuffer = mIndexBuffer;
-
-                indices_np= np.arange(numVertices, dtype=np.int32)
-                buf = idata.indexBuffer.lock(
-                    0,
-                    numVertices * idata.indexBuffer.getIndexSize(),
-                    Ogre.HardwareBuffer.HBL_DISCARD
-                )
-                ctypes.memmove(int(buf), indices_np.ctypes.data, indices_np.nbytes)
-                idata.indexBuffer.unlock()
-
-            self.node._update(True,False)
+        self.node._update(True,False)
     def __del__(self):
         global _cameraEventReceivers
         if _cameraEventReceivers is not None:
@@ -151,6 +166,37 @@ class GaussianSplat:
             ctypes.memmove(int(buf), idx.ctypes.data, idx.nbytes)
             idata.indexBuffer.unlock()
 
+
+class SceneComponent_GaussianSplat(RE.SceneComponent):
+    def __init__(self,filename, **args):
+        super().__init__(RE.SceneComponent.NONE, **args)
+        self.nodeId='splat_000'
+        self._material=''
+        self.source=filename
+        self.splat=None
+    def redraw(self):
+        if self.splat is None:
+            removeEntity(self.nodeId)
+            rootnode=ogreRootSceneNode()
+            self.pNode=rootnode.createChildSceneNode(self.nodeId)
+            self.splat=GaussianSplat(self.nodeId+"_c0", self.source, self.pNode)
+            self.pChildNode=SceneNodeWrap(self.splat.node)
+            pCnode=self.pChildNode
+            if self._localPosition is not None: pCnode.setPosition(self._localPosition)
+            if self._localScale is not None: pCnode.setScale(self._localScale)
+            if self._localOrientation is not None: pCnode.setOrientation(self._localOrientation)
+            # these attributes are not for editing
+            self._localPosition=None
+            self._localScale=None
+            self._localOrientation=None
+            self.splat._update()
+        self.setTransform()
+
+def _tempFunc(self, filename, **args):
+    entity=SceneComponent_GaussianSplat(filename, **args)
+    self._add(entity)
+    return entity
+SceneGraph.addGaussianSplat=_tempFunc
 
 def eraseAllDrawn():
     global _objectList, _activeBillboards,_layout
@@ -654,11 +700,10 @@ class Layout(FltkRenderer):
         return PythonExtendWin_member(name)
     def create(self, type_name, uid,  title=None, pos=None, epos=None):
         self.widgets.append(Widget(type_name, uid, title,pos, epos))
+    def addText(self, title, on_screen_title=None):
+        self.create('Text', title, on_screen_title)
     def addButton(self, title, on_screen_title=None):
-        if on_screen_title is None:
-            self.create('Button', title, title)
-        else:
-            self.create('Button', title, on_screen_title)
+        self.create('Button', title, on_screen_title)
     def addCheckButton(self, title, initialValue):
         self.create('Check_Button', title, title)
         self.widget(0).checkButtonValue(initialValue)
@@ -1222,6 +1267,9 @@ def ui_callback(): # handle ui events and draw texts
                 if v.type_name=='Button':
                     if imgui.Button(v.title or v.uid):
                         onCallback(v, None)
+                elif v.type_name=='Text':
+                    imgui.Text(v.title or v.uid)
+                    imgui.Text('')
                 elif v.type_name=='Check_Button':
                     changed,value=imgui.Checkbox(v.title or v.uid, v.checkButtonValue())
                     if changed and v._active:
