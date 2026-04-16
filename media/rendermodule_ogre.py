@@ -114,8 +114,11 @@ class GaussianSplat:
         idata.indexBuffer.unlock()
 
     def __init__(self, node_name, filename, parentSceneNode=None):
-        global _cameraEventReceivers
+        global _cameraEventReceivers, _frameMoveObjects
         _cameraEventReceivers.append(self)
+        _frameMoveObjects.append(self)
+        self.updateNecessary=True
+        self.isVisible=True
         entity_name="_entity_"+node_name
         if filename[-5:]=='.mesh':
             if(Ogre.MeshManager.getSingleton().resourceExists(filename)):
@@ -129,6 +132,7 @@ class GaussianSplat:
         elif filename[-4:]=='.ply':
             self.mesh=ply_to_mesh(node_name+"_converted_mesh", filename)
             self.entity= ogreSceneManager().createEntity( entity_name,node_name+"_converted_mesh")
+            self._createIndices(self.entity.getMesh())
         else:
             assert(False)
 
@@ -138,6 +142,9 @@ class GaussianSplat:
         self.node=rootnode.createChildSceneNode(node_name)
         self.node.attachObject(self.entity)
         self.node._update(True,False)
+    def setVisible(self, bvalue):
+        self.isVisible=bvalue
+        self.node.setVisible(bvalue)
     def __del__(self):
         global _cameraEventReceivers
         if _cameraEventReceivers is not None:
@@ -146,26 +153,29 @@ class GaussianSplat:
         ser = Ogre.MeshSerializer()
         assert(filename[-5:]=='.mesh')
         ser.exportMesh(self.mesh, filename)
+    def frameMove(self, elapsed):
+        if self.updateNecessary and self.isVisible:
+            global _window_data
+            self.updateNecessary=False
+            cam = _window_data.camera
+            camPos=cam.getDerivedPosition()
+            if True:
+                localCamPos=self.node._getDerivedOrientation().inverse()*m.vector3(camPos.x, camPos.y, camPos.z)
+                distances=self.positions@localCamPos.array
+                idx=np.argsort(distances).astype(np.int32)
+                idata=self.idata
+                numVertices=self.positions.shape[0]
+                buf = idata.indexBuffer.lock(
+                    0,
+                    numVertices * idata.indexBuffer.getIndexSize(),
+                    Ogre.HardwareBuffer.HBL_DISCARD
+                )
+                ctypes.memmove(int(buf), idx.ctypes.data, idx.nbytes)
+                idata.indexBuffer.unlock()
 
 
     def _update(self):
-        global _window_data
-        cam = _window_data.camera
-        camPos=cam.getDerivedPosition()
-        if True:
-            localCamPos=self.node._getDerivedOrientation().inverse()*m.vector3(camPos.x, camPos.y, camPos.z)
-            distances=self.positions@localCamPos.array
-            idx=np.argsort(distances).astype(np.int32)
-            idata=self.idata
-            numVertices=self.positions.shape[0]
-            buf = idata.indexBuffer.lock(
-                0,
-                numVertices * idata.indexBuffer.getIndexSize(),
-                Ogre.HardwareBuffer.HBL_DISCARD
-            )
-            ctypes.memmove(int(buf), idx.ctypes.data, idx.nbytes)
-            idata.indexBuffer.unlock()
-
+        self.updateNecessary=True
 
 class SceneComponent_GaussianSplat(RE.SceneComponent):
     def __init__(self,filename, **args):
