@@ -155,6 +155,7 @@ class GaussianSplat:
         ser.exportMesh(self.mesh, filename)
     def frameMove(self, elapsed):
         if self.updateNecessary and self.isVisible:
+            #print('update', self.node.getName())
             global _window_data
             self.updateNecessary=False
             cam = _window_data.camera
@@ -1944,22 +1945,30 @@ if True:
 
 
     def ply_to_mesh(mesh_name, input_ply):
-        xyz, sh, opacity, scale, rot = read_splat_ply(input_ply)
+        if isFileExist(input_ply+'.cached.npy'):
+            print('loading '+input_ply+'.cached.npy')
+            data=np.load(input_ply+'.cached.npy', allow_pickle=True).item()
+            xyz=data['xyz']
+            color=data['color']
+            covd=data['covd']
+            covu=data['covu']
+        else:
+            xyz, sh, opacity, scale, rot = read_splat_ply(input_ply)
 
-        sh0 = sh[:, :3]
-        color = np.clip(np.hstack((sh0_to_diffuse(sh0), sigmoid(opacity)))*255, 0, 255).astype(np.uint8)
+            sh0 = sh[:, :3]
+            color = np.clip(np.hstack((sh0_to_diffuse(sh0), sigmoid(opacity)))*255, 0, 255).astype(np.uint8)
 
-        N = len(xyz)
+            N = len(xyz)
 
-        covd = np.empty((N, 3), dtype=np.float32)
-        covu = np.empty((N, 3), dtype=np.float32)
-        mod = (N - 1)//100
+            covd = np.empty((N, 3), dtype=np.float32)
+            covu = np.empty((N, 3), dtype=np.float32)
+            mod = (N - 1)//100
 
-        for i, (s, r) in enumerate(zip(scale, rot)):
-            covd[i], covu[i] = compute_cov3d(s, r)
-            if i % mod == 0:
-                print(f"computing covariances {100*i/len(xyz):.0f}%", end="\r")
-
+            for i, (s, r) in enumerate(zip(scale, rot)):
+                covd[i], covu[i] = compute_cov3d(s, r)
+                if i % mod == 0:
+                    print(f"computing covariances {100*i/len(xyz):.0f}%", end="\r")
+            np.save(input_ply+'.cached', {'xyz':xyz,'color': color, 'covd': covd, 'covu':covu})
         mesh = splat_to_mesh(mesh_name, xyz, color, covd, covu)
         return mesh
 
@@ -2083,3 +2092,110 @@ class _QuadList:
             manual.position(pp.x, pp.y, pp.z)
             manual.textureCoord(color.x+texCoord[j].x*0.01, 1-color.y+texCoord[j].z*0.01)
 
+def isFileExist(fname):
+    import os.path
+    return os.path.isfile(fname)
+
+
+def setQuater(anyvec,q ):
+    anyvec[0]=q.w
+    anyvec[1]=q.x
+    anyvec[2]=q.y
+    anyvec[3]=q.z
+def setVec3(anyvec,v ):
+    anyvec[0]=v.x
+    anyvec[1]=v.y
+    anyvec[2]=v.z
+def setTransf(anyvec, tf):
+    setVec3(anyvec, tf.translation)
+    setQuater(anyvec[3:], tf.rotation)
+
+
+def saveTable(tbl=dict, filename=str):
+    lua.F('util.saveTable', tbl, filename)
+def loadTable(filename=str):
+    return lua.F('util.loadTable', filename)
+
+# ZUP to YUP
+def quater_ZtoY(q):
+    return m.quater(q.w, q.y, q.z, q.x)
+def vector3_ZtoY(v):
+    return m.vector3(v.y, v.z, v.x)
+def transf_ZtoY(t):
+    return m.transf(t.rotation.ZtoY(), t.translation.ZtoY())
+
+def ZtoY(v):
+    mat=v
+    if isinstance(v, m.matrixn):
+        mat=v.ref()
+
+    if mat.shape[1]==3:
+        mat[:, [0,1,2]]=mat[:, [1,2,0]]
+    elif mat.shape[1]==4:
+        mat[:, [1,2,3]]=mat[:, [2,3,1]]
+    else:
+        pdb.set_trace()
+
+
+# YUP to ZUP
+def quater_YtoZ(q):
+    return m.quater(q.w, q.z, q.x, q.y)
+def vector3_YtoZ(v):
+    return m.vector3(v.z, v.x, v.y)
+def transf_YtoZ(t):
+    return m.transf(t.rotation.YtoZ(), t.translation.YtoZ())
+
+def boolN_numpy(self):
+    out=np.ones((self.size()), dtype=bool)
+    for i in range(self.size()):
+        out[i]=self(i)
+    return out
+m.boolN.numpy=boolN_numpy
+def tempFunc(self):
+    out=m.intvectorn(self.size())
+    out.setAllValue(0)
+    for i in range(self.size()):
+        if self(i):
+            out.set(i,1)
+    return out
+m.boolN.asInt=tempFunc
+m.quater.ZtoY=quater_ZtoY
+m.vector3.ZtoY=vector3_ZtoY
+m.transf.ZtoY=transf_ZtoY
+m.quater.YtoZ=quater_YtoZ
+m.vector3.YtoZ=vector3_YtoZ
+m.transf.YtoZ=transf_YtoZ
+def tempFunc(self):
+    return max(self.x, self.y, self.z)
+m.vector3.maximum=tempFunc
+
+
+def tempFunc(self, b):
+    out=m.boolN()
+    out._or(self,b)
+    return out
+m.boolN.bitwiseOR=tempFunc
+
+def tempFunc(self, prevFrameRate, newFrameRate):
+    lua.M(self, 'resample', prevFrameRate, newFrameRate)
+m.MotionDOF.resample=tempFunc
+
+def tempFunc(self, b):
+    out=m.boolN()
+    out._and(self,b)
+    return out
+m.boolN.bitwiseAND=tempFunc
+def tempFunc(self):
+    out=m.intIntervals()
+    out.runLengthEncode(self)
+    return out
+m.boolN.runLengthEncode=tempFunc
+def tempFunc(self, t=m.transf):
+
+    for i in range(self.numFrames()):
+        pose=self.pose(i)
+        root=m.transf(pose.rotations(0), pose.translations(0))
+        newRoot=t*root
+        pose.rotations(0).assign(newRoot.rotation)
+        pose.translations(0).assign(newRoot.translation)
+m.Motion.transform=tempFunc
