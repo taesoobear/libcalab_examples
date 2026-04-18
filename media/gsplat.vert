@@ -116,5 +116,6 @@ void main() {
 
     pixf = vec2(radius_px);
     gl_PointSize = 2.0*radius_px;
-    gl_Position = vec4(p_proj.xy, p_proj.z, 1.0);
+	//gl_Position = vec4(p_proj.xy, p_proj.z, 1.0);
+    gl_Position = p_hom;
 }
