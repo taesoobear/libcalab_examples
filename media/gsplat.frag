@@ -19,7 +19,11 @@ void main() {
 
     // Eq. (2) from 3D Gaussian splatting paper.
     float alpha = min(.99, col.a * exp(power));
+	//alpha=1.0;
 
     // we render in reverse order, so we can use normal alpha blending
     gl_FragColor = vec4(col.rgb, alpha);
+	//gl_FragColor = vec4(con * 0.5 + 0.5, 1.0);
+	//gl_FragColor = vec4(pixf / 100.0, 0.0, 1.0);
+	//gl_FragColor = vec4(gl_PointCoord, 0.0, 1.0);
 }
