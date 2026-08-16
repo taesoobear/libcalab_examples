@@ -16,6 +16,7 @@ import numpy as np
 
 useFSAA=False
 
+_layoutHeight=500
 
 # private 
 _mouseInfo=None
@@ -1247,7 +1248,7 @@ def _world_to_screen(world_pos):
 
     return int(screen_x), int(screen_y), True
 def ui_callback(): # handle ui events and draw texts
-    global _layout, _mouseInfo, _window_data,_softKill,_drawOutput,_outputs
+    global _layout, _mouseInfo, _window_data,_softKill,_drawOutput,_outputs, _layoutHeight
     # This function is called every frame to draw your custom ImGui elements
 
     #imgui.NewFrame()
@@ -1268,7 +1269,7 @@ def ui_callback(): # handle ui events and draw texts
     # ImGui UI
     # -----------------------------
     if imgui.Begin("Menu"):
-        imgui.SetWindowSize(imgui.ImVec2(300, 500));
+        imgui.SetWindowSize(imgui.ImVec2(300, _layoutHeight));
         if hasattr(__main__,'onCallback'):
             onCallback=checkedOnCallback
         else:
