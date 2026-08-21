@@ -1406,14 +1406,20 @@ def ui_callback(): # handle ui events and draw texts
     if changed:
         _drawOutput=value
     if value:
+
+        io = imgui.GetIO()
+
+        window_width=300
+        imgui.SetNextWindowPos( imgui.ImVec2(io.DisplaySize.x - window_width, 0))
+
+        imgui.SetNextWindowSize( imgui.ImVec2( window_width, 500))
         if imgui.Begin("debug output"):
-            imgui.SetWindowSize(imgui.ImVec2(300, 500));
             imgui.Text('use  RE.output("msg key", "msg")')
             imgui.Separator();
             for i, key in enumerate(sorted(_outputs)):
                 imgui.Text(f"{key}\t{_outputs[key]}")
 
-            imgui.End()
+        imgui.End()
 
     if _mouseInfo is None:
         _mouseInfo=lua.Table()
@@ -1482,8 +1488,8 @@ def ui_callback(): # handle ui events and draw texts
     else:
         _mouseInfo =None
 
-    imgui.End()
 
+    imgui.End()
     # -----------------------------
     # Rendering
     # -----------------------------
@@ -2296,7 +2302,7 @@ class Timeline:
 
             # timeline slider
             changed, frame = imgui.SliderInt(
-                "Timeline",
+                "",
                 self.currFrame,
                 0,
                 self.totalTime - 1
@@ -2305,7 +2311,7 @@ class Timeline:
             if changed:
                 self.currFrame = frame
                 self.changeCurrFrame(frame)
-            imgui.End()
+        imgui.End()
         return hovered
     def __del__(self):
         global _frameMoveObjects
@@ -2318,6 +2324,7 @@ class Timeline:
             __main__.onFrameChanged(self.currFrame)
             self._currFrame+=elapsed/self.frametime
             if self._currFrame>=self.numframes:
+                self._currFrame=self.numframes-1
                 self.playing=False
 
 
