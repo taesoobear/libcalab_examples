@@ -1,4 +1,5 @@
-from libcalab import m, RE, lua, control
+from libcalab import m, lua, control
+from libcalab import RE as RE_consolemode
 # here the RE above denotes the console mode rendermodule. ( rendermodule != rendermodule_ogre)
 import Ogre # pip install ogre-python
 import Ogre.RTShader
@@ -13,12 +14,14 @@ from pathlib import Path
 import subprocess, re
 import __main__
 import numpy as np
-
+import weakref
+import platform
 useFSAA=False
 
 _layoutHeight=500
 
 # private 
+doNotGarbageCollect=[] # list of instances which should not be garbage collected. (e.g. loaders)
 _mouseInfo=None
 _window_data=None
 _layout=None
@@ -37,8 +40,10 @@ _outputTranslationNecessary={'getPosition':True, 'getScale':True, 'getParent':Tr
 _prevMouse=(0,0,1)
 _outputs={} # debug outputs
 _drawOutput=False
+_timeline=None
+doNotGarbageCollect=[] # list of instances which should not be garbage collected. (e.g. loaders)
 
-SceneGraph=RE.SceneGraph
+SceneGraph=RE_consolemode.SceneGraph
 
 def output(key, *args):
     global _outputs
@@ -116,8 +121,8 @@ class GaussianSplat:
 
     def __init__(self, node_name, filename, parentSceneNode=None):
         global _cameraEventReceivers, _frameMoveObjects
-        _cameraEventReceivers.append(self)
-        _frameMoveObjects.append(self)
+        _cameraEventReceivers.append(weakref.ref(self))
+        _frameMoveObjects.append(weakref.ref(self))
         self.updateNecessary=True
         self.isVisible=True
         entity_name="_entity_"+node_name
@@ -137,7 +142,7 @@ class GaussianSplat:
         else:
             assert(False)
 
-        rootnode=RE.ogreRootSceneNode()
+        rootnode=RE_consolemode.ogreRootSceneNode()
         if parentSceneNode is not None:
             rootnode=parentSceneNode
         self.node=rootnode.createChildSceneNode(node_name)
@@ -149,7 +154,8 @@ class GaussianSplat:
     def __del__(self):
         global _cameraEventReceivers
         if _cameraEventReceivers is not None:
-            _cameraEventReceivers.remove(self)
+            # self 삭제.
+            _cameraEventReceivers= [r for r in _cameraEventReceivers if r() is not self]
     def exportAsOgreMesh(self, filename):
         ser = Ogre.MeshSerializer()
         assert(filename[-5:]=='.mesh')
@@ -179,9 +185,9 @@ class GaussianSplat:
     def _update(self):
         self.updateNecessary=True
 
-class SceneComponent_GaussianSplat(RE.SceneComponent):
+class SceneComponent_GaussianSplat(RE_consolemode.SceneComponent):
     def __init__(self,filename, **args):
-        super().__init__(RE.SceneComponent.NONE, **args)
+        super().__init__(RE_consolemode.SceneComponent.NONE, **args)
         self.nodeId='splat_000'
         self._material=''
         self.source=filename
@@ -359,14 +365,14 @@ class ObjectList:
         self.mRootSceneNode=ogreRootSceneNode().createChildSceneNode(self.uid)
         self.isVisible=True
         self._scheduledObjects=[]
-        _frameMoveObjects.append(self)
+        _frameMoveObjects.append(weakref.ref(self))
     def registerLayoutElement(self,name_id,  *args):
         global _layout
         _layout.layoutElements[name_id]=args
     def __del__(self):
         global _frameMoveObjects
         if _frameMoveObjects is not None:
-            _frameMoveObjects.remove(self)
+            _frameMoveObjects= [r for r in _frameMoveObjects if r() is not self]
     
     def clear(self):
         removeEntity(self.mRootSceneNode)
@@ -437,7 +443,7 @@ class ObjectList:
             elif(tn[-1:]=="X"):
                 normal=m.vector3(0,1,0);
             elif(tn[-1:]=="V"):
-                vp=RE.viewpoint()
+                vp=RE_consolemode.viewpoint()
                 normal=vp.vat-vp.vpos
                 normal.normalize();
                 normal.scale(-1)
@@ -490,7 +496,7 @@ class ObjectList:
             if thickness==0:
                 thickness=10
 
-            vp=RE.viewpoint()
+            vp=RE_consolemode.viewpoint()
             normal=vp.vat-vp.vpos
             normal.normalize();
             normal.scale(-1)
@@ -526,7 +532,7 @@ class ObjectList:
         return line;
 
     def registerEntityScheduled(self, filename, destroyTime):
-        return self._registerObjectScheduled(RE.ogreSceneManager().createEntity(m.generateUniqueName(), filename), destroyTime)
+        return self._registerObjectScheduled(RE_consolemode.ogreSceneManager().createEntity(m.generateUniqueName(), filename), destroyTime)
 
     def registerObjectScheduled(self, destroyTime, typeName, materialName, data, thickness=0.7):
         return self._registerObjectScheduled(self._createObject(m.generateUniqueName(), typeName, materialName, data, thickness), destroyTime);
@@ -558,7 +564,7 @@ class ObjectList:
         pEntity=None
         if isinstance(filename, str):
             entity_name=f"_entity_{self.uid}_{node_name}"
-            pEntity=RE.ogreSceneManager().createEntity(entity_name, filename)
+            pEntity=RE_consolemode.ogreSceneManager().createEntity(entity_name, filename)
         else:
             assert(filename is not None)
             pEntity=filename
@@ -677,7 +683,7 @@ class Widget:
 # share the simplest code
 Widget.sliderValue=Widget.menuValue
 Widget.inputValue=Widget.menuValue
-
+#
 
 class PythonExtendWin_member:
     def __init__(self, name: str):
@@ -750,7 +756,7 @@ def drawLine(objectList, startpos, endpos, nameid=None, color='green'):
     assert(startpos.x==startpos.x)
 
     if nameid is None:
-        nameid=RE.generateUniqueName()
+        nameid=RE_consolemode.generateUniqueName()
     drawBillboard( lines.matView(), nameid,color , 1.5 ,"BillboardLineList")
 
 def drawText(objectList, pos, nameid, vec3_color=None, height=None, text=None):
@@ -1189,6 +1195,25 @@ def drawPoints(objectList, vec_or_mat, name, materialName, thickness =1):
         drawBillboard(vec_or_mat, name, materialName, thickness , 'QuadListV'  )
 
 
+def WRLloader(filename, *kwargs):
+    if filename[-4:]=='.wrl':
+        loader=m.VRMLloader(filename)
+        doNotGarbageCollect.append(loader)
+        return loader
+    elif filename[-4:]=='.png' or filename[-4:]=='.raw':
+        var_name='mLoader'+m.generateUniqueName()
+        lua.F_lua(var_name, "MainLib.VRMLloader", filename, *kwargs)
+        return lua.G_VRMLloader(var_name)
+
+    var_name='mLoader'+m.generateUniqueName()
+    lua.require( "subRoutines/WRLloader")
+    if filename[-8:]=='.wrl.lua' or filename[-8:]=='.wrl.dat' :
+        lua.F_lua(var_name, "MainLib.WRLloader", filename)
+    else:
+        lua.F_lua(var_name, "MainLib.WRLloader", lua.toTable(filename))
+    info={} # todo : return this when requested through an option
+    info['var_name']=var_name
+    return lua.G_VRMLloader(var_name)
 
 def dummyOnCallback(w, userData):
     pass
@@ -1248,12 +1273,13 @@ def _world_to_screen(world_pos):
 
     return int(screen_x), int(screen_y), True
 def ui_callback(): # handle ui events and draw texts
-    global _layout, _mouseInfo, _window_data,_softKill,_drawOutput,_outputs, _layoutHeight
+    global _layout, _mouseInfo, _window_data,_softKill,_drawOutput,_outputs, _layoutHeight, _timeline
     # This function is called every frame to draw your custom ImGui elements
 
     #imgui.NewFrame()
     #imgui.ShowDemoWindow() # Displays the standard Dear ImGui demo window
     imgui.SetNextWindowSize(imgui.ImVec2(200, 200), imgui.Cond_Once)
+    imgui.SetNextWindowPos(imgui.ImVec2(0,0))
 
     # draw texts
 
@@ -1265,6 +1291,8 @@ def ui_callback(): # handle ui events and draw texts
             pos=imgui.ImVec2(screen_x, screen_y);
             color = imgui.GetColorU32(imgui.ImVec4(mat.x*255,mat.y*255, mat.z*255, 255)); 
             draw_list.AddText(pos, color, text)
+
+
     # -----------------------------
     # ImGui UI
     # -----------------------------
@@ -1359,6 +1387,12 @@ def ui_callback(): # handle ui events and draw texts
         wx.x <= mx.x <= wx.x + wh.x and
         wx.y <= mx.y <= wx.y + wh.y)
 
+    if _timeline is not None: 
+        hovered2=_timeline.draw()
+        hovered=hovered or hovered2
+
+
+
     # HandleMouseMessage2
     # Mouse buttons
     altPressed = imgui.GetIO().KeyAlt;
@@ -1428,22 +1462,22 @@ def ui_callback(): # handle ui events and draw texts
                         y=dx.y/(height/2.0)
                         x*=(m_scale/m_zoom);
                         y*=(m_scale/m_zoom);
-                        if hasattr(RE.viewpoint(), 'PanRight'):
-                            RE.viewpoint().PanRight(x);
-                            RE.viewpoint().PanUp(-y);
+                        if hasattr(RE_consolemode.viewpoint(), 'PanRight'):
+                            RE_consolemode.viewpoint().PanRight(x);
+                            RE_consolemode.viewpoint().PanUp(-y);
                     elif imgui.IsMouseDown(0) : 
-                        RE.viewpoint().TurnRight(-(dx.x/width))
-                        RE.viewpoint().TurnUp(dx.y/(height/2.0))
+                        RE_consolemode.viewpoint().TurnRight(-(dx.x/width))
+                        RE_consolemode.viewpoint().TurnUp(dx.y/(height/2.0))
                     else:
                         dy= dx.y/(height/2.0)
                         dy*=m_scale
 
-                        RE.viewpoint().ZoomOut(-dy)
+                        RE_consolemode.viewpoint().ZoomOut(-dy)
 
-                    if hasattr(RE.viewpoint(),"CheckConstraint"):
-                        RE.viewpoint().CheckConstraint();
+                    if hasattr(RE_consolemode.viewpoint(),"CheckConstraint"):
+                        RE_consolemode.viewpoint().CheckConstraint();
                     else:
-                        RE.viewpoint().update()
+                        RE_consolemode.viewpoint().update()
                     _mouseInfo.downMousePos=m.vector3(mouse_pos.x, mouse_pos.y,0)
     else:
         _mouseInfo =None
@@ -1536,21 +1570,21 @@ set /p res=Press Enter to continue.
 
 def createMainWin(*args):
     global _window_data, _layout,_luaEnv
-    RE.createMainWin()
+    RE_consolemode.createMainWin()
 
     _luaEnv=m.getPythonWin()
     # swap console versions to ogre-python versions
-    # (we need to override only those functions used in the RE.SceneGraph class.)
+    # (we need to override only those functions used in the RE_consolemode.SceneGraph class.)
     m.getPythonWin=_getPythonWin      
     m.FltkRenderer=_getPythonWin
     m.getSceneNode=getSceneNode
     m.renderOneFrame=renderOneFrame
     m.ObjectList=ObjectList
-    RE.output=output
-    RE.draw=draw
-    RE.erase=erase
-    RE.ogreSceneManager=ogreSceneManager
-    RE.ogreSceneManager=ogreSceneManager
+    RE_consolemode.output=output
+    RE_consolemode.draw=draw
+    RE_consolemode.erase=erase
+    RE_consolemode.ogreSceneManager=ogreSceneManager
+    RE_consolemode.ogreSceneManager=ogreSceneManager
     if not os.path.exists('./work'):
         print("Ogre3D resource folder ('work') not found. Creating it from GitHub taesoobear/IPCDNNwalk/work.")
         cache_root = Path.home() / '.cache'
@@ -1611,7 +1645,7 @@ def _tempFunc(pnode, cnode_name):
 m.createChildSceneNode=_tempFunc
 
 def viewpoint():
-    return RE.viewpoint()
+    return RE_consolemode.viewpoint()
 
 def ogreSceneManager():
     global _window_data
@@ -1631,7 +1665,8 @@ def renderOneFrame(check):
             __main__.frameMove(elapsed)
 
         for i, v in enumerate(_frameMoveObjects):
-            v.frameMove(elapsed)
+            obj=v()
+            obj.frameMove(elapsed)
 
         global _window_data, _lastCamPos, _cameraEventReceivers,_activeBillboards
         cam = _window_data.camera
@@ -1639,13 +1674,13 @@ def renderOneFrame(check):
         camDist=(camPos-_lastCamPos).squaredLength()
         if camDist>1:
             for i, v in enumerate(_cameraEventReceivers):
-                v._update()
+                v()._update()
             for k, v in _activeBillboards.items():
                 draw('Traj',*v)
             _lastCamPos=Ogre.Vector3(camPos.x, camPos.y, camPos.z)
 
 
-        _sceneGraphs=RE._sceneGraphs
+        _sceneGraphs=RE_consolemode._sceneGraphs
         if _sceneGraphs is not None:
             for i, v in enumerate(_sceneGraphs):
                 for k, vv in v.objects.items():
@@ -1753,7 +1788,7 @@ def _createLight_default():
         mSceneMgr.setShadowColour(Ogre.ColourValue(0.5, 0.5, 0.5));
 
     rootnode =ogreRootSceneNode()
-    lightnode=RE.createChildSceneNode(rootnode, "LightNode")
+    lightnode=RE_consolemode.createChildSceneNode(rootnode, "LightNode")
     ogreSceneManager().setAmbientLight(Ogre.Vector3(0.4))
 
     
@@ -1792,16 +1827,16 @@ def _createLight_default():
                 numMainLights=100
                 lightVar=0.3
                 sc=0.998
-            RE.ogreSceneManager().setShadowTextureCount(numMainLights)
+            RE_consolemode.ogreSceneManager().setShadowTextureCount(numMainLights)
 
-    RE.ogreSceneManager().setShadowColour(Ogre.Vector3(sc,sc,sc))
+    RE_consolemode.ogreSceneManager().setShadowColour(Ogre.Vector3(sc,sc,sc))
 
 
     for i in range(1,numMainLights +1):
         if i==1 :
-            light=RE.ogreSceneManager().createLight("Mainlight")
+            light=RE_consolemode.ogreSceneManager().createLight("Mainlight")
         else:
-            light=RE.ogreSceneManager().createLight("Mainlight"+str(i))
+            light=RE_consolemode.ogreSceneManager().createLight("Mainlight"+str(i))
         light.setType(Ogre.Light.LT_DIRECTIONAL)
 
         node=lightnode.createChildSceneNode("mainlightnode"+str(i))
@@ -1816,7 +1851,7 @@ def _createLight_default():
         light.setCastShadows(True)
         
     filllightnode=lightnode.createChildSceneNode("filllightNode")
-    light=RE.ogreSceneManager().createLight("FillLight")
+    light=RE_consolemode.ogreSceneManager().createLight("FillLight")
     filllightnode.attachObject(light)
     filllightnode.setDirection(0.5,0.7,-0.5)
     light.setType(Ogre.Light.LT_DIRECTIONAL)
@@ -1829,7 +1864,7 @@ def _loadBG_default():
     _createLight_default()
 
     rootnode =ogreRootSceneNode()
-    bgnode=RE.createChildSceneNode(rootnode , "BackgroundNode")
+    bgnode=RE_consolemode.createChildSceneNode(rootnode , "BackgroundNode")
     plane=Ogre.Plane()
     plane.normal=Ogre.Vector3(0,1,0)
     plane.d=-0.5
@@ -2024,7 +2059,7 @@ class _QuadList:
         axis1=m.vector3()
         axis2=m.vector3();
         qy=m.quater()
-        vp=RE.viewpoint()
+        vp=RE_consolemode.viewpoint()
         mNormal=self.normal
         halfWidth=self.width/2;
         qy.setAxisRotation(m.vector3(0,1,0), m.vector3(0,0,1), vp.vpos-vp.vat)
@@ -2200,3 +2235,140 @@ def tempFunc(self, t=m.transf):
         pose.rotations(0).assign(newRoot.rotation)
         pose.translations(0).assign(newRoot.translation)
 m.Motion.transform=tempFunc
+
+#Compatibility with the libcalab_ogre3d layers below
+
+def addFrameMoveObject(obj):
+    global _frameMoveObjects
+    _frameMoveObjects.append(weakref.ref(obj))
+
+
+
+class Timeline:
+    def __init__(self, numframes, frametime=1.0 / 60.0):
+        global _timeline
+        addFrameMoveObject(self)
+        self.totalTime = numframes
+        self.frametime=frametime
+        self.numframes=numframes
+        self.currFrame=0
+        self._currFrame=0
+        self.playing=False
+        _timeline=self
+    def draw(self):
+
+        io = imgui.GetIO()
+        window_height = 80
+
+        imgui.SetNextWindowPos( imgui.ImVec2(0, io.DisplaySize.y - window_height))
+
+        imgui.SetNextWindowSize( imgui.ImVec2( io.DisplaySize.x, window_height))
+        hovered=False
+        if imgui.Begin("Timeline"):
+            # 화면 하단에 고정
+
+            mx = imgui.GetMousePos()
+            wx  = imgui.GetWindowPos()
+            wh = imgui.GetWindowSize()
+            hovered = (
+                wx.x <= mx.x <= wx.x + wh.x and
+                wx.y <= mx.y <= wx.y + wh.y)
+            shortcut = (
+                io.KeyCtrl and
+                imgui.IsKeyPressed(imgui.Key_P)
+            )
+            if (imgui.IsKeyPressed(io.KeyCtrl)):
+                print('ctrl')
+            if (imgui.IsKeyPressed(imgui.Key_P)):
+                print(imgui.IsKeyPressed(imgui.Key_P))
+
+            # play / pause
+            if imgui.Button("Pause" if self.playing else "Play") or shortcut:
+                self.playing = not self.playing
+            imgui.SameLine()
+
+
+            if platform.system() == "Darwin":
+                imgui.TextDisabled("Alt+P")
+            else:
+                imgui.TextDisabled("Ctrl+P")
+            imgui.SameLine()
+
+            # timeline slider
+            changed, frame = imgui.SliderInt(
+                "Timeline",
+                self.currFrame,
+                0,
+                self.totalTime - 1
+            )
+
+            if changed:
+                self.currFrame = frame
+                self.changeCurrFrame(frame)
+            imgui.End()
+        return hovered
+    def __del__(self):
+        global _frameMoveObjects
+        if _frameMoveObjects is not None:
+            _frameMoveObjects= [r for r in _frameMoveObjects if r() is not self]
+
+    def frameMove(self, elapsed):
+        if self.playing:
+            self.currFrame=int(self._currFrame)
+            __main__.onFrameChanged(self.currFrame)
+            self._currFrame+=elapsed/self.frametime
+            if self._currFrame>=self.numframes:
+                self.playing=False
+
+
+    def changeCurrFrame(self, iframe):
+        self.currFrame=iframe
+        self._currFrame=iframe
+        __main__.onFrameChanged(self.currFrame)
+
+    def numFrames(self):
+        return self.totalTime
+
+    def reset(self, numframes, frameTime=1.0 / 60.0):
+        self.motion_win.changeCurrFrame(0)
+
+        self.renderer.removeFrameMoveObject(self)
+        self.motion_win.detachSkin(self)
+
+        self.totalTime = numframes
+        self.attachTimer(frameTime, numframes)
+
+        self.renderer.addFrameMoveObject(self)
+        self.motion_win.addSkin(self)
+
+class PLDPrimSkin:
+    def __init__(self, loader):
+        self.scale = 1
+        self.loader=loader
+        self.fkSolver = m.BoneForwardKinematics(loader)
+        self.fkSolver.setPose(loader.pose())
+        self.uid = m.generateUniqueName()
+        self.thickness=3 # 3cm
+        self.materialName='solidwhite'
+    def setScale(self, s,s2=None,s3=None):
+        self.scale*=s
+        self.redraw()
+    def setPose(self, pose):
+        self.fkSolver.setPose(pose)
+        self.redraw()
+    def setPoseDOF(self, posedof):
+        self.fkSolver.setPoseDOF(posedof)
+        self.redraw()
+    def redraw(self):
+        lines=m.vector3N()
+        lines.reserve(self.fkSolver.numBone())
+        for i in range(2, self.fkSolver.numBone()):
+            lines.pushBack(self.fkSolver.globalFrame(i).translation)
+            lines.pushBack(self.fkSolver.globalFrame(self.loader.bone(i).parent().treeIndex()).translation)
+        drawBillboard( lines.matView()*self.scale,  self.uid, self.materialName, self.thickness, 'BillboardLineList' )
+
+
+
+def createSkin(loader:m.MotionLoader):
+    return PLDPrimSkin(loader)
+
