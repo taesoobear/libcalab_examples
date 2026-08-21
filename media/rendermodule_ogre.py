@@ -2266,12 +2266,12 @@ class Timeline:
         io = imgui.GetIO()
         window_height = 80
 
-        imgui.SetNextWindowPos( imgui.ImVec2(0, io.DisplaySize.y - window_height))
 
         imgui.SetNextWindowSize( imgui.ImVec2( io.DisplaySize.x, window_height))
         hovered=False
         if imgui.Begin("Timeline"):
             # 화면 하단에 고정
+            imgui.SetWindowPos( imgui.ImVec2(0, io.DisplaySize.y - window_height))
 
             mx = imgui.GetMousePos()
             wx  = imgui.GetWindowPos()
@@ -2311,6 +2311,8 @@ class Timeline:
             if changed:
                 self.currFrame = frame
                 self.changeCurrFrame(frame)
+        else:
+            imgui.SetWindowPos( imgui.ImVec2(0, io.DisplaySize.y - 10))
         imgui.End()
         return hovered
     def __del__(self):
