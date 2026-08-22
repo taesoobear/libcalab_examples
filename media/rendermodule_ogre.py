@@ -45,6 +45,7 @@ _timeline=None
 doNotGarbageCollect=[] # list of instances which should not be garbage collected. (e.g. loaders)
 
 SceneGraph=RE_consolemode.SceneGraph
+FBXloader=RE_consolemode.FBXloader
 
 def output(key, *args):
     global _outputs
@@ -944,7 +945,7 @@ class MeshToEntity:
             idata.indexBuffer.unlock()
 
         self.mMesh=mMesh
-    def createEntity(self, entityName,  materialName):
+    def createEntity(self, entityName,  materialName='lightgrey'):
 
         if(ogreSceneManager().hasEntity(entityName)):
             ogreSceneManager().destroyEntity(entityName);
@@ -1649,9 +1650,9 @@ def createMainWin(*args):
 def ogreRootSceneNode():
     return SceneNodeWrap(ogreSceneManager().getRootSceneNode())
 m.ogreRootSceneNode=ogreRootSceneNode
-def _tempFunc(pnode, cnode_name):
+def createChildSceneNode(pnode, cnode_name):
     return pnode.createChildSceneNode(cnode_name)
-m.createChildSceneNode=_tempFunc
+m.createChildSceneNode=createChildSceneNode
 
 def viewpoint():
     return RE_consolemode.viewpoint()
@@ -2384,3 +2385,587 @@ class PLDPrimSkin:
 def createSkin(loader:m.MotionLoader):
     return PLDPrimSkin(loader)
 
+def createFBXskin(fbx:FBXloader, drawSkeleton=None, **kwargs):
+    """
+    Create a skinned character from an FBX loader.
+
+    Args:
+        fbx:
+            taesooLib FBX loader containing the character skeleton and skin.
+
+        **kwargs:
+            Optional settings:
+
+            drawSkeleton (bool):
+                If True, draw the character skeleton. Defaults to False.
+
+            adjustable (bool):
+                If True, create an adjustable skeleton whose bone lengths
+                can be modified. Defaults to False.
+
+    Returns:
+        The created FBX skin.
+    """
+    if drawSkeleton:
+        return FBXloaderSkin(fbx, drawSkeleton)
+    else:
+        return FBXloaderSkin(fbx, kwargs)
+
+
+class FBXloaderSkin:
+    def __init__(self, fbxloader, option=None):
+        if option is None:
+            option = {}
+
+        def opt(name, default=None):
+            if isinstance(option, dict):
+                return option.get(name, default)
+            return getattr(option, name, default)
+
+        self.scale = m.vector3(1, 1, 1)
+        self.fbx = fbxloader
+        loader=fbxloader.loader
+        self.fkSolver = m.BoneForwardKinematics(loader)
+        self.fkSolver.setPose(loader.pose())
+
+        self.skelSkin = None
+        self.poseMap = None
+        self.angleRetarget = None
+        self.prevPose = None
+        self.nodes2 = None
+
+        if not getattr(fbxloader, 'fbxInfo', None):
+            if isinstance(option, dict):
+                option['drawSkeleton'] = True
+            else:
+                option.drawSkeleton = True
+
+        if opt('drawSkeleton', False):
+            self.skelSkin = RE.createSkin( fbxloader.loader)
+            self.skelSkin.setPose(fbxloader.loader.pose())
+
+        self.uid = m.generateUniqueName()
+
+        # Lua에서는 1-based table.
+
+        n_submeshes=len(fbxloader.fbxInfo)
+        self.nodes = [None]*n_submeshes
+        self.ME = [None]*n_submeshes
+
+
+        if not getattr(fbxloader, 'fbxInfo', None):
+            return
+
+
+        for iminus1 in range(n_submeshes):
+            i=iminus1+1
+            meshInfo=fbxloader.fbxInfo[i]
+            node = None
+            meshToEntity = None
+            entity = None
+
+            if ogreSceneManager() is not None:
+                # Lua: meshInfo[1]
+                mesh = meshInfo.mesh
+
+                useTexCoord = False
+                useColor = False
+                useNormal = True
+                buildEdgeList = not opt('disableShadow', False)
+                dynamicUpdate = True
+
+                if mesh.numNormal() == 0:
+                    useNormal = False
+
+                if mesh.numTexCoord() > 0:
+                    useTexCoord = True
+
+                if mesh.numColor() > 0:
+                    useColor = True
+
+                # scale 100 for rendering
+                meshToEntity = MeshToEntity(
+                    mesh,
+                    self.uid + 'meshName' + str(i),
+                    buildEdgeList,
+                    dynamicUpdate,
+                    useNormal,
+                    useTexCoord,
+                    useColor
+                )
+
+                self.ME[iminus1] = meshToEntity
+                meshToEntity = self.ME[iminus1]
+
+                material = opt('material', None)
+                if material is None:
+                    material=meshInfo.material
+
+                entity = meshToEntity.createEntity(
+                    'entityName' + self.uid + '_' + str(i)
+                )
+
+
+                if material:
+                    entity.setMaterialName(material)
+
+                    entity.setMaterialName(meshInfo.material)
+
+                else:
+                    entity.setMaterialName('grey_transparent')
+
+                node = createChildSceneNode(
+                    ogreRootSceneNode(),
+                    self.uid + '_' + str(i)
+                )
+
+                rigidBody=fbxloader.get('rigidBody')
+                if rigidBody is True:
+                    node2 = createChildSceneNode(
+                        node,
+                        self.uid + '__' + str(i)
+                    )
+
+                    node2.attachObject(entity)
+
+                    if self.nodes2 is None:
+                        self.nodes2 = [None]*n_submeshes
+
+                    self.nodes2[iminus1] = node2
+
+                else:
+                    node.attachObject(entity)
+
+            else:
+                node = Ogre.SceneNode()
+
+            self.nodes[iminus1] = [
+                node,
+                m.vector3(0, 0, 0),
+                m.vector3N()
+            ]
+
+        self.setPose(fbxloader.loader.pose())
+
+    def getNode(self, meshIndex):
+        return self.nodes[meshIndex][0]
+
+    def getNodeInfo(self, meshIndex):
+        return self.nodes[meshIndex]
+
+    def numMesh(self):
+        return len(self.nodes)
+
+    # ------------------------------------------------------------------
+    # pose
+    # ------------------------------------------------------------------
+
+    def getState(self):
+        return self.fkSolver
+
+    def setVisible(self, bVisible):
+        if self.skelSkin is not None:
+            self.skelSkin.setVisible(bVisible)
+
+        for i, v in enumerate(self.nodes):
+            v[0].setVisible(bVisible)
+
+    def __del__(self):
+        self.skelSkin = None
+
+        if self.nodes is not None:
+            for i, v in enumerate(self.nodes):
+                if v[0] is not None and removeEntity is not None:
+                    removeEntity(v[0])
+
+        self.nodes = None
+        self.fbx = None
+        self.fkSolver = None
+
+    # ------------------------------------------------------------------
+    # material
+    # ------------------------------------------------------------------
+
+    def setMaterial(self, name):
+        for i, me in enumerate(self.ME):
+            me.getLastCreatedEntity().setMaterialName(name)
+
+    def unsetMaterial(self):
+        for i, me in enumerate(self.ME):
+            meshInfo = self.fbx.fbxInfo[i+1]
+            me.getLastCreatedEntity().setMaterialName(
+                meshInfo.material
+            )
+
+    # ------------------------------------------------------------------
+    # pose transfer
+    #
+    # assuming self.loader == mLoader_orig
+    # poseconv = MotionUtil.PoseTransfer(
+    #     mLoader,
+    #     mLoader_orig,
+    #     True
+    # )
+    # ------------------------------------------------------------------
+
+    def setPoseTransfer(self, poseconv):
+        self.poseMap = poseconv
+
+        if getattr(poseconv, 'pt', None):
+            self.angleRetarget = poseconv
+            self.poseMap = poseconv.pt
+
+    def setPose(self, pose):
+        if self.poseMap is not None:
+            if self.angleRetarget is not None:
+                # Lua:
+                # pose = self.angleRetarget(pose)
+                pose = self.angleRetarget(pose)
+
+            else:
+                self.poseMap.setTargetSkeleton(pose)
+
+                pose = Pose()
+                self.poseMap.target().getPose(pose)
+
+        self.fkSolver.setPose(pose)
+        self.setSamePose(self.fkSolver)
+
+    def _setPose(self, pose, loader):
+        self.setPose(pose)
+
+    def setPoseDOF(self, pose):
+        if self.poseMap is not None:
+            if self.angleRetarget is not None:
+                pose = self.angleRetarget(pose)
+
+            else:
+                self.poseMap.source().setPoseDOF(pose)
+
+                pose = Pose()
+                self.poseMap.source().getPose(pose)
+
+                self.poseMap.setTargetSkeleton(pose)
+                self.poseMap.target().getPose(pose)
+
+            self.fkSolver.setPose(pose)
+
+        else:
+            self.fkSolver.setPoseDOF(pose)
+
+        self.setSamePose(self.fkSolver)
+
+    def setSamePose(self, fk):
+        # assert(fk == self.fbx.loader.fkSolver())
+        # BoneForwardKinematics.operator== doesn't work yet.
+
+        if self.skelSkin is not None:
+            self.skelSkin.setSamePose(fk)
+
+        self.fkSolver.assign(fk)
+
+        fbxloader = self.fbx
+
+        # --------------------------------------------------------------
+        # rigid body
+        # --------------------------------------------------------------
+
+        rigidBody=fbxloader.get('rigidBody')
+        if rigidBody==True:
+            for i, node2 in enumerate(self.nodes2):
+                node2.setOrientation(
+                    fk.globalFrame(1).rotation
+                )
+                node2.setPosition(
+                    fk.globalFrame(1).translation
+                )
+
+            return
+
+        # --------------------------------------------------------------
+        # skinned body
+        # --------------------------------------------------------------
+
+        rootTrans = fk.globalFrame(1).translation.copy()
+
+        currJointPos = m.vector3N(
+            self.fkSolver.numBone() - 1
+        )
+
+        # Lua:
+        #
+        # for ibone=1, self.fkSolver:numBone()-1 do
+        #     currJointPos(ibone-1):assign(
+        #         self.fkSolver:globalFrame(ibone).translation-rootTrans
+        #     )
+        # end
+
+        for ibone in range(1, self.fkSolver.numBone()):
+            currJointPos(ibone - 1).assign(
+                self.fkSolver.globalFrame(ibone).translation
+                - rootTrans
+            )
+
+        buildEdgeList = False
+
+        if (
+            self.prevPose is None
+            or np.mean((self.prevPose.array-currJointPos.array)**2) > 1e-3
+        ):
+            buildEdgeList = True
+            self.prevPose = currJointPos
+
+
+        n_submeshes=len(fbxloader.fbxInfo)
+        for iminus1 in range(n_submeshes):
+            i=iminus1+1
+            meshInfo=fbxloader.fbxInfo[i]
+            ME = self.ME[iminus1]
+
+            if ME is None:
+                continue
+
+            node = self.nodes[iminus1]
+            skin = meshInfo.skin
+            mesh = meshInfo.mesh
+
+            # update vertex positions
+            skin.calcVertexPositions(
+                self.fkSolver,
+                mesh
+            )
+
+            # remove root translation from mesh vertices
+            removeRootTrans = m.matrix4()
+            removeRootTrans.setTranslation(
+                -rootTrans,
+                False
+            )
+
+            mesh.transform(removeRootTrans)
+
+            useNormal = mesh.numNormal() > 0
+
+            ME.buildEdgeList=buildEdgeList
+
+            if useNormal:
+                skin.calcVertexNormals(
+                    self.fkSolver,
+                    fbxloader._getBindPoseGlobal(i),
+                    meshInfo.localNormal,
+                    mesh
+                )
+
+                ME.updatePositionsAndNormals()
+
+            else:
+                ME.updatePositions()
+
+            # backup current mesh pose
+            if hasattr(mesh, 'getVertices'):
+                mesh.getVertices(node[2])
+
+            node[0].setPosition(
+                node[1]
+                + rootTrans * self.scale.x
+            )
+
+    # ------------------------------------------------------------------
+    # transform
+    # ------------------------------------------------------------------
+
+    def setScale(self, x, y=None, z=None):
+        if y is None:
+            y = x
+
+        if z is None:
+            z = x
+
+        if self.skelSkin is not None:
+            self.skelSkin.setScale(x, y, z)
+
+        for i, node in enumerate(self.nodes):
+            prevPos = node[0].getPosition()
+
+            node[0].setScale(x, y, z)
+
+            node[0].setPosition(
+                prevPos.x / self.scale.x * x,
+                prevPos.y / self.scale.y * y,
+                prevPos.z / self.scale.z * z
+            )
+
+        self.scale = m.vector3(x, y, z)
+
+    def setTranslation(self, x, y=None, z=None):
+        if y is None:
+            assert x is not None
+
+            y = x.y
+            z = x.z
+            x = x.x
+
+        if self.skelSkin is not None:
+            self.skelSkin.setTranslation(x, y, z)
+
+        for i, node in enumerate(self.nodes):
+            node[0].setPosition(
+                node[0].getPosition()
+                - node[1]
+                + m.vector3(x, y, z)
+            )
+
+            node[1] = m.vector3(x, y, z)
+
+    # ------------------------------------------------------------------
+    # vertices
+    # ------------------------------------------------------------------
+
+    def _getVertexInWorld(self, meshIndex, vertexIndex):
+        meshInfo = self.fbx.fbxInfo[meshIndex - 1]
+        skin = meshInfo.skin
+
+        return skin.calcVertexPosition(
+            self.fkSolver,
+            vertexIndex
+        )
+
+    # ------------------------------------------------------------------
+    # picking
+    # ------------------------------------------------------------------
+
+    # use proper ray pick
+    def pickTriangle(self, x, y):
+        ray = Ray()
+
+        RE.FltkRenderer().screenToWorldRay(
+            x,
+            y,
+            ray
+        )
+
+        return self._pickTriangle(ray)
+
+    # vertexPositions: relative to root translation.
+    #
+    # return:
+    # {
+    #     mesh: Mesh,
+    #     skin: SkinnedMeshFromVertexInfo,
+    #     vertexPositions: vector3N
+    # }
+    def getMeshInfo(self, fbxMeshIndex=None):
+        if fbxMeshIndex is None:
+            fbxMeshIndex = 1
+
+        node = self.nodes[fbxMeshIndex]
+        meshInfo = self.fbx.fbxInfo[fbxMeshIndex - 1]
+
+        return {
+            'mesh': meshInfo[0],
+            'skin': meshInfo.skin,
+            'vertexPositions': node[2],
+        }
+
+    # input ray will be modified!
+    def _pickTriangle(self, ray):
+        s = self.scale.x
+
+        # TODO: loop through all meshes
+        fbxMeshIndex = 1
+
+        node = self.nodes[fbxMeshIndex]
+
+        meshPos = (
+            node[1]
+            + self.fkSolver.globalFrame(1).translation * s
+        )
+
+        ray.translate(-meshPos)
+        ray.scale(1.0 / s)
+
+        out = vector3()
+        baryCoeffs = vector3()
+
+        mesh = self.fbx.fbxInfo[fbxMeshIndex - 1][0]
+
+        ti = ray.pickBarycentric(
+            mesh,
+            node[2],
+            baryCoeffs,
+            out
+        )
+
+        if ti >= 0:
+            return {
+                'faceIndex': ti,
+                'baryCoeffs': baryCoeffs,
+                'pos': meshPos + out * s,
+            }
+
+        return None
+
+    # ------------------------------------------------------------------
+    # barycentric sampling
+    # ------------------------------------------------------------------
+
+    def samplePosition(
+        self,
+        meshIndex,
+        ti,
+        baryCoeffs
+    ):
+        meshInfo = self.fbx.fbxInfo[meshIndex - 1]
+        mesh = meshInfo[0]
+
+        f = mesh.getFace(ti)
+
+        if hasattr(mesh, 'getVertices'):
+            rootTrans = (
+                self.fkSolver
+                .globalFrame(1)
+                .translation
+                .copy()
+            )
+
+            node = self.nodes[meshIndex]
+            vertices = node[2]
+
+            v1 = (
+                vertices(f.vertexIndex(0))
+                + rootTrans
+            )
+
+            v2 = (
+                vertices(f.vertexIndex(1))
+                + rootTrans
+            )
+
+            v3 = (
+                vertices(f.vertexIndex(2))
+                + rootTrans
+            )
+
+        else:
+            v1 = self._getVertexInWorld(
+                meshIndex,
+                f.vertexIndex(0)
+            )
+
+            v2 = self._getVertexInWorld(
+                meshIndex,
+                f.vertexIndex(1)
+            )
+
+            v3 = self._getVertexInWorld(
+                meshIndex,
+                f.vertexIndex(2)
+            )
+
+        out2 = (
+            v1 * baryCoeffs.x
+            + v2 * baryCoeffs.y
+            + v3 * baryCoeffs.z
+        )
+
+        return out2
