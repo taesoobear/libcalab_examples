@@ -903,7 +903,8 @@ class MeshToEntity:
                 source += 1
 
             mMesh._setBounds(Ogre.AxisAlignedBox(xyz.array.min(axis=0), xyz.array.max(axis=0))) # pylint: disable=protected-access
-
+            radius = np.linalg.norm(xyz.array, axis=0).max()
+            mMesh._setBoundingSphereRadius(float(radius))
             vertexBuffer = sub.vertexData.vertexBufferBinding.getBuffer(0);
             if False:
                 #debug code
@@ -943,6 +944,16 @@ class MeshToEntity:
             )
             ctypes.memmove(int(buf), indices_np.ctypes.data, indices_np.nbytes)
             idata.indexBuffer.unlock()
+
+        if False:
+
+            if not mMesh.isPreparedForShadowVolumes():
+                mMesh.prepareForShadowVolume()
+
+            mMesh.freeEdgeList()
+            mMesh.buildEdgeList()
+
+        mMesh.load()
 
         self.mMesh=mMesh
     def createEntity(self, entityName,  materialName='lightgrey'):
@@ -1755,9 +1766,8 @@ def _randomNormal2():
 def _createLight_default():
     global _window_data
 
-    stencilShadow=True
-    depthShadow=True
-    textureShadow=False
+    stencilShadow=False
+    depthShadow=False
     highQualityRendering=False # set this true for high quality render
     numMainLights=5 # 5이상이어야 품질이 좋지만, m1 macbook에서 너무 느림
     lightVar=0.05
@@ -1796,6 +1806,12 @@ def _createLight_default():
             mSceneMgr.setShadowDirLightTextureOffset(0);
             mSceneMgr.setShadowFarDistance(50);
             mSceneMgr.setShadowCameraSetup(Ogre.LiSPSMShadowCameraSetup.create());
+        elif textureShadow:
+            mSceneMgr.setShadowTechnique(
+                Ogre.SHADOWTYPE_TEXTURE_MODULATIVE
+            )
+            mSceneMgr.setShadowTextureSize(2048)
+            mSceneMgr.setShadowFarDistance(300)
         else:
             mSceneMgr.setShadowTechnique(Ogre.SHADOWTYPE_STENCIL_MODULATIVE);
         mSceneMgr.setShadowColour(Ogre.ColourValue(0.5, 0.5, 0.5));
@@ -1812,7 +1828,6 @@ def _createLight_default():
     lightOS=0.0
 
     if not stencilShadow :
-        lightVar=0.1
         if depthShadow :
             light1D=0.8/numMainLights
             light1S=0.2/numMainLights
@@ -1820,27 +1835,15 @@ def _createLight_default():
             lightOS=0.2/numMainLights
         sc=0.9
         if textureShadow :
-            sc=0.995
+            sc=0.97
             highQualityRendering=True
     else:
         sc=0.975
 
     if highQualityRendering :
         # high-quality
-        numMainLights=100
-        lightVar=0.04
-
-        if stencilShadow :
-            sc=math.pow(0.5, 1/numMainLights)
-        else:
-            if depthShadow :
-                lightVar=0.2
-                sc=0.99
-            else:
-                numMainLights=100
-                lightVar=0.3
-                sc=0.998
-            RE_consolemode.ogreSceneManager().setShadowTextureCount(numMainLights)
+        numMainLights=10
+        RE_consolemode.ogreSceneManager().setShadowTextureCount(numMainLights)
 
     RE_consolemode.ogreSceneManager().setShadowColour(Ogre.Vector3(sc,sc,sc))
 
@@ -2290,6 +2293,14 @@ class Timeline:
             shortcut2 = ( io.KeyCtrl and imgui.IsKeyPressed(imgui.Key_0))
             if shortcut2:
                 self.changeCurrFrame(0)
+            if imgui.IsKeyPressed(imgui.Key_LeftBracket):
+                self.playing=False
+                self.changeCurrFrame(self.currFrame-1)
+            if imgui.IsKeyPressed(imgui.Key_RightBracket):
+                self.playing=False
+                self.changeCurrFrame(self.currFrame+1)
+
+
 
             
             # play / pause
@@ -2335,6 +2346,10 @@ class Timeline:
 
 
     def changeCurrFrame(self, iframe):
+        if iframe<0 :
+            iframe=0
+        if iframe>=self.numframes:
+            iframe=self.numframes-1
         self.currFrame=iframe
         self._currFrame=iframe
         __main__.onFrameChanged(self.currFrame)

@@ -44,6 +44,7 @@ skin1.setScale(skinScale, skinScale, skinScale)
 # draw mesh
 skin2=RE.createFBXskin(fbx)
 skin2.setScale(skinScale, skinScale, skinScale)
+skin2.setMaterial('lightgrey')
 
 if False:
     # test memory
