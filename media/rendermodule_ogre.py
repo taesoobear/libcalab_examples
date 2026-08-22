@@ -955,7 +955,7 @@ class MeshToEntity:
         entity.setMaterialName(materialName);
         return entity
 
-    def getLastCreatedEntity():
+    def getLastCreatedEntity(self):
         return self.entity
     def updatePositions(self, vertices=None):
         if hasattr(self.meshToEntity_cpp, 'getRawData'):
