@@ -31,6 +31,7 @@ _activeBillboards={}
 _softKill=False
 _debugMode=False
 _frameMoveObjects=[]
+_frameMoveObjects2=[] # after frameMove
 _cameraEventReceivers=[]
 _cacheCylinderMeshes={}
 _cacheBoxMeshes={}
@@ -120,9 +121,9 @@ class GaussianSplat:
         idata.indexBuffer.unlock()
 
     def __init__(self, node_name, filename, parentSceneNode=None):
-        global _cameraEventReceivers, _frameMoveObjects
+        global _cameraEventReceivers, _frameMoveObjects2
         _cameraEventReceivers.append(weakref.ref(self))
-        _frameMoveObjects.append(weakref.ref(self))
+        _frameMoveObjects2.append(weakref.ref(self))
         self.updateNecessary=True
         self.isVisible=True
         entity_name="_entity_"+node_name
@@ -152,7 +153,9 @@ class GaussianSplat:
         self.isVisible=bvalue
         self.node.setVisible(bvalue)
     def __del__(self):
-        global _cameraEventReceivers
+        global _cameraEventReceivers, _frameMoveObjects2
+        if _frameMoveObjects2 is not None:
+            _frameMoveObjects2= [r for r in _frameMoveObjects2 if r() is not self]
         if _cameraEventReceivers is not None:
             # self 삭제.
             _cameraEventReceivers= [r for r in _cameraEventReceivers if r() is not self]
@@ -1673,6 +1676,9 @@ def renderOneFrame(check):
         for i, v in enumerate(_frameMoveObjects):
             obj=v()
             obj.frameMove(elapsed)
+        for i, v in enumerate(_frameMoveObjects2):
+            obj=v()
+            obj.frameMove(elapsed)
 
         global _window_data, _lastCamPos, _cameraEventReceivers,_activeBillboards
         cam = _window_data.camera
@@ -2279,15 +2285,12 @@ class Timeline:
             hovered = (
                 wx.x <= mx.x <= wx.x + wh.x and
                 wx.y <= mx.y <= wx.y + wh.y)
-            shortcut = (
-                io.KeyCtrl and
-                imgui.IsKeyPressed(imgui.Key_P)
-            )
-            if (imgui.IsKeyPressed(io.KeyCtrl)):
-                print('ctrl')
-            if (imgui.IsKeyPressed(imgui.Key_P)):
-                print(imgui.IsKeyPressed(imgui.Key_P))
+            shortcut = ( io.KeyCtrl and imgui.IsKeyPressed(imgui.Key_P))
+            shortcut2 = ( io.KeyCtrl and imgui.IsKeyPressed(imgui.Key_0))
+            if shortcut2:
+                self.changeCurrFrame(0)
 
+            
             # play / pause
             if imgui.Button("Pause" if self.playing else "Play") or shortcut:
                 self.playing = not self.playing
