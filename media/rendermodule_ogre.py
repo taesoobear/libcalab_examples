@@ -72,6 +72,93 @@ class _Application(ohi._Application):
         self.getRoot().saveConfig()
         return True
 
+if True:
+    # define splat function
+    def read_splat_ply(filename):
+        f = open(filename, 'rb')
+
+        if f.readline().strip() != b"ply":
+            raise ValueError("Not a ply file")
+
+        f.readline() # endianess
+        num_vertices = int(f.readline().strip().split()[2])
+
+        # expect format as below
+
+        NUM_PROPS=0
+
+        name_to_idx={}
+        while True:
+            line=re.sub(br"\s+", b"", f.readline().strip()) # remove spaces
+
+            name_to_idx[line]=NUM_PROPS
+            if line==b"end_header":
+                break
+            NUM_PROPS+=1
+
+        data = np.frombuffer(f.read(), dtype=np.float32).reshape(num_vertices, NUM_PROPS)
+
+        idx_xyz=name_to_idx[b'propertyfloatx']
+        xyz = data[:, idx_xyz:idx_xyz+3]
+        idx_sh=name_to_idx[b'propertyfloatf_dc_0']
+        sh = data[:, idx_sh:idx_sh+3]
+        idx_opacity=name_to_idx[b'propertyfloatopacity']
+        opacity = data[:, idx_opacity:idx_opacity+1]
+        idx_scale=name_to_idx[b'propertyfloatscale_0']
+        scale = np.exp(data[:, idx_scale:idx_scale+3])
+        idx_rot=name_to_idx[b'propertyfloatrot_0']
+        rot = data[:, idx_rot:idx_rot+4]
+        # normalise quaternion
+        rot = rot / np.linalg.norm(rot, axis=1)[:, None]
+
+        return xyz, sh, opacity, scale, rot
+    SH_C0 = 0.28209479177387814
+
+    def sigmoid(x):
+        return 1 / (1 + np.exp(-x))
+
+    def sh0_to_diffuse(sh):
+        return SH_C0 * sh + 0.5
+
+    def compute_cov3d(scale, rot):
+        q = toQuater(rot)
+        mat = m.matrix3(q)
+
+        S = np.diag(scale)
+        M = mat.array @ S
+
+        Cov = M @ M.T
+
+        return np.diag(Cov), np.array([Cov[0, 1], Cov[0, 2], Cov[1, 2]], dtype=np.float32)
+
+    def read_splat_ply_from_cache(input_ply):
+        if isFileExist(input_ply+'.cached.npy'):
+            print('loading '+input_ply+'.cached.npy')
+            data=np.load(input_ply+'.cached.npy', allow_pickle=True).item()
+            xyz=data['xyz']
+            color=data['color']
+            covd=data['covd']
+            covu=data['covu']
+        else:
+            xyz, sh, opacity, scale, rot = read_splat_ply(input_ply)
+
+            sh0 = sh[:, :3]
+            color = np.clip(np.hstack((sh0_to_diffuse(sh0), sigmoid(opacity)))*255, 0, 255).astype(np.uint8)
+
+            N = len(xyz)
+
+            covd = np.empty((N, 3), dtype=np.float32)
+            covu = np.empty((N, 3), dtype=np.float32)
+            mod = (N - 1)//100
+
+            for i, (s, r) in enumerate(zip(scale, rot)):
+                covd[i], covu[i] = compute_cov3d(s, r)
+                if i % mod == 0:
+                    print(f"computing covariances {100*i/len(xyz):.0f}%", end="\r")
+            np.save(input_ply+'.cached', {'xyz':xyz,'color': color, 'covd': covd, 'covu':covu})
+        return xyz, color, covd, covu
+    def ply_to_cache(new_ply_filename, xyz, color, covd, covu):
+        np.save(new_ply_filename+'.cached', {'xyz':xyz,'color': color, 'covd': covd, 'covu':covu})
 _gs_first=True
 class GaussianSplat:
     def _createPositions(self, mesh):
@@ -129,7 +216,13 @@ class GaussianSplat:
         self.updateNecessary=True
         self.isVisible=True
         entity_name="_entity_"+node_name
-        if filename[-5:]=='.mesh':
+        if isinstance(filename,  tuple):
+            xyz, color, covd, covu=filename
+            self.positions=xyz.astype(np.float32)
+            self.mesh=ply_to_mesh(node_name+"_converted_mesh", (self.positions, color, covd, covu))
+            self.entity= ogreSceneManager().createEntity( entity_name,node_name+"_converted_mesh")
+            self._createIndices(self.entity.getMesh())
+        elif filename[-5:]=='.mesh':
             if(Ogre.MeshManager.getSingleton().resourceExists(filename)):
                 srcMesh=Ogre.MeshManager.getSingleton().getByName(filename)
                 clonedMesh = srcMesh.clone(entity_name+"MyMesh_Clone", "General");
@@ -155,6 +248,8 @@ class GaussianSplat:
         self.isVisible=bvalue
         self.node.setVisible(bvalue)
     def __del__(self):
+        if removeEntity is not None:
+            removeEntity(self.node)
         global _cameraEventReceivers, _frameMoveObjects2
         if _frameMoveObjects2 is not None:
             _frameMoveObjects2= [r for r in _frameMoveObjects2 if r() is not self]
@@ -297,7 +392,7 @@ class SceneNode_member:
 
 def removeEntityByName(name):
     removeEntity(name)
-def removeEntity(uid):
+def removeEntity(uid: str|Ogre.Node|Ogre.SceneNode|SceneNodeWrap):
     global _debugMode
     if isinstance(uid, str):
         uid=getSceneNode(uid)
@@ -2041,7 +2136,9 @@ if True:
 
 
     def ply_to_mesh(mesh_name, input_ply):
-        if isFileExist(input_ply+'.cached.npy'):
+        if isinstance(input_ply, tuple):
+            xyz, color, covd, covu=input_ply
+        elif isFileExist(input_ply+'.cached.npy'):
             print('loading '+input_ply+'.cached.npy')
             data=np.load(input_ply+'.cached.npy', allow_pickle=True).item()
             xyz=data['xyz']
