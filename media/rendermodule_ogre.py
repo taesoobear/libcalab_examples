@@ -615,6 +615,8 @@ class Widget:
             self._browserSelected=[]
         elif type_name=='Check_Button':
             self._value=False
+        elif type_name=='Box':
+            self._value=title
         elif type_name=='Input' or type_name=='Multiline_Input':
             self._value=''
         self._active=True
@@ -676,6 +678,8 @@ class Widget:
     def browserClear(self):
         self._browserSelected=[]
         self._browser=[]
+    def browserValue(self):
+        return self._browserSelected.index(True) if True in self._browserSelected else -1 
 
     def browserAdd(self, v):
         self._browser.append(v)
@@ -1323,6 +1327,8 @@ def ui_callback(): # handle ui events and draw texts
                 if v.type_name=='Button':
                     if imgui.Button(v.title or v.uid):
                         onCallback(v, None)
+                elif v.type_name=='Box':
+                    imgui.Text(v._value)
                 elif v.type_name=='Text':
                     imgui.Text(v.title or v.uid)
                     imgui.Text('')
