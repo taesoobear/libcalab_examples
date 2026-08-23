@@ -19,6 +19,7 @@ import platform
 useFSAA=False
 
 _layoutHeight=500
+_capture_frame=None
 
 # private 
 doNotGarbageCollect=[] # list of instances which should not be garbage collected. (e.g. loaders)
@@ -1288,7 +1289,7 @@ def _world_to_screen(world_pos):
 
     return int(screen_x), int(screen_y), True
 def ui_callback(): # handle ui events and draw texts
-    global _layout, _mouseInfo, _window_data,_softKill,_drawOutput,_outputs, _layoutHeight, _timeline
+    global _layout, _mouseInfo, _window_data,_softKill,_drawOutput,_outputs, _layoutHeight, _timeline, _capture_frame 
     # This function is called every frame to draw your custom ImGui elements
 
     #imgui.NewFrame()
@@ -1416,6 +1417,19 @@ def ui_callback(): # handle ui events and draw texts
     imgui.Separator();
     imgui.Text("press q to quit.")
     #imgui.Text(f"alt:{altPressed}, ctrl:{ctrlPressed}, shift:{shiftPressed}")
+
+    changed,value=imgui.Checkbox('capture', _capture_frame is not None)
+
+    io = imgui.GetIO()
+    if(io.KeyCtrl and imgui.IsKeyPressed(imgui.Key_C) ):
+        value=_capture_frame is None
+        changed=True
+
+    if changed:
+        if value:
+            _capture_frame=0
+        else:
+            _capture_frame=None
 
     changed,value=imgui.Checkbox('show debug output', _drawOutput)
     if changed:
@@ -1675,9 +1689,14 @@ def ogreSceneManager():
 
 _lastCamPos=Ogre.Vector3(1e5,0,0)
 def renderOneFrame(check):
-    global _start_time ,_softKill
+    global _start_time ,_softKill, _capture_frame
     ctime=time.time()
     elapsed =  ctime- _start_time
+    if _capture_frame is not None:
+        if elapsed<1.0/30.0:
+            time.sleep(1.0/30.0-elapsed)
+        elapsed=1.0/30.0
+
     _start_time=ctime
     if check:
         if elapsed>1.0/30:
@@ -1713,6 +1732,19 @@ def renderOneFrame(check):
 
     evt=ohi.window_draw("Ogre ImGui")
     _updateView()
+
+    if _capture_frame is not None:
+        window=_window_data.window
+        settle_renders=0
+        img = grab_frame(window.getWidth(), window.getHeight(), settle_renders)
+
+        frames_dir = Path("dump")
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        out_name = f"{_capture_frame:05d}.jpg"
+        save_jpeg(frames_dir / out_name, img)
+        print(out_name)
+        _capture_frame+=1
+
     #ohi._ctx.pollEvents()
     #_window_data.window.update()
     #evt = _window_data.last_key
@@ -2984,3 +3016,30 @@ class FBXloaderSkin:
         )
 
         return out2
+
+
+def grab_frame(width: int, height: int, settle_renders: int = 3,
+               blank_overlay: bool = False) -> np.ndarray:
+    for _ in range(settle_renders):
+        RE.renderOneFrame(True)
+
+    raw, meta = ohi.window_pixel_data(ohi._ctx.name)
+    _, h, w, ch = meta
+    arr = np.frombuffer(bytes(raw), dtype=np.uint8).reshape(h, w, ch).copy()
+    if ch == 4:
+        arr = arr[:, :, :3]
+    elif ch != 3:
+        raise RuntimeError(f"Unexpected channel count {ch} in window_pixel_data")
+    arr = np.ascontiguousarray(arr)
+    if blank_overlay:
+        x0, y0, x1, y1 = UI_OVERLAY_RECT
+        x1 = min(x1, w)
+        y1 = min(y1, h)
+        arr[y0:y1, x0:x1, :] = 0
+    return arr
+
+def save_jpeg(path: Path, image: np.ndarray, quality: int = 92) -> None:
+    from PIL import Image
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(image).save(path, format="JPEG", quality=quality, subsampling=1)
