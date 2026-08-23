@@ -4,8 +4,16 @@ import numpy as np
 import pdb, math
 
 
+def onCallback(w, uid):
+    global lego
+    if w.id()=='delete splat':
+        if lego is not None:
+            del lego
+            lego=None
+
 this=RE.createMainWin()
-RE.turnOffSoftShadows()  # For faster rendering, since libcalab_examples.git uses stencil shadows, which are slow.
+this.addButton('delete splat')
+#RE.turnOffSoftShadows()  # For faster rendering, since libcalab_examples.git uses texture shadows, which can be slow.
 
 scene_manager=RE.ogreSceneManager()
 
