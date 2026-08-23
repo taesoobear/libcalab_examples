@@ -1808,7 +1808,7 @@ def _createLight_default():
     depthShadow=False
     highQualityRendering=False # set this true for high quality render
     numMainLights=5 # 5이상이어야 품질이 좋지만, m1 macbook에서 너무 느림
-    lightVar=0.05
+    lightVar=0.02
 
     mViewport=_window_data.window.getViewport(0)
 
@@ -1849,7 +1849,7 @@ def _createLight_default():
                 Ogre.SHADOWTYPE_TEXTURE_MODULATIVE
             )
             mSceneMgr.setShadowTextureSize(2048)
-            mSceneMgr.setShadowFarDistance(300)
+            mSceneMgr.setShadowFarDistance(1000)
         else:
             mSceneMgr.setShadowTechnique(Ogre.SHADOWTYPE_STENCIL_MODULATIVE);
         mSceneMgr.setShadowColour(Ogre.ColourValue(0.5, 0.5, 0.5));
