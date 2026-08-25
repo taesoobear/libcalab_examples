@@ -1414,7 +1414,7 @@ def ui_callback(): # handle ui events and draw texts
     # ImGui UI
     # -----------------------------
     if imgui.Begin("Menu"):
-        imgui.SetWindowSize(imgui.ImVec2(300*_ui_scale, _layoutHeight*_ui_scale));
+        imgui.SetWindowSize(imgui.ImVec2(230*_ui_scale, _layoutHeight*_ui_scale));
         if hasattr(__main__,'onCallback'):
             onCallback=checkedOnCallback
         else:
@@ -1477,10 +1477,14 @@ def ui_callback(): # handle ui events and draw texts
                             for ii, vv in enumerate(v._items):
                                 if isinstance(vv, tuple):
                                     shortcut=vv[ 1]
-                                    shortcut=shortcut[:-1]+shortcut[:-1].upper()
+                                    if shortcut[:2]=='FL':
+                                        shortcut=shortcut[3:]
+                                    #shortcut=shortcut[:-1]+shortcut[:-1].upper()
+                                    # todo -> shortcut check 추가.
                                     clicked_new= imgui.MenuItem(vv[0], shortcut, v.menuValue()==ii)
                                     if clicked_new:
-                                        print("New clicked")
+                                        v.menuValue(ii)
+                                        onCallback(v, None)
                                 else:
                                     clicked_new= imgui.MenuItem(vv, None, v.menuValue()==ii)
                                     if clicked_new:

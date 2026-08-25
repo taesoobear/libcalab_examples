@@ -9,7 +9,7 @@ def ctor(this):
     this.create("Check_Button", "b", "b")
     this.widget(0).checkButtonValue(False)
 
-    this.create("Check_Button", "cc", "cc")
+    this.create("Check_Button", "c", "cc") # id, text
     this.create("Value_Slider", "hip angle", "hip angle",1);
     this.widget(0).sliderRange(-60,60);
     this.widget(0).sliderValue(0);
