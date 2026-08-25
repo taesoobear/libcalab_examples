@@ -157,6 +157,24 @@ material invisible_shadow_receiver
 		}
 	}
 }
+material invisible_shadow_caster
+{
+	cast_shadow on
+	technique
+	{
+		pass
+		{
+			shading gouraud
+
+			ambient 0.5 0.5 0.5 0.0
+			diffuse 0.5 0.5 0.5 0.0
+			specular 0.5 0.5 0.5 0.0 3.0
+			emissive 0.0 0.0 0.0 0.0
+			scene_blend alpha_blend
+			depth_write off
+		}
+	}
+}
 material invisible_gth
 {
 	receive_shadows off

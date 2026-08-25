@@ -2739,6 +2739,9 @@ class FBXloaderSkin:
     def setMaterial(self, name):
         for i, me in enumerate(self.ME):
             me.getLastCreatedEntity().setMaterialName(name)
+    def setRenderQueueGroup(self, qgroup:int):
+        for i, me in enumerate(self.ME):
+            me.getLastCreatedEntity().setRenderQueueGroup(qgroup)
 
     def unsetMaterial(self):
         for i, me in enumerate(self.ME):
