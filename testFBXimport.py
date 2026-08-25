@@ -13,7 +13,7 @@ else:
         raise Exception("install latest libcalab!")
 
 if not RE.path('../Mixamo').exists():
-    print("clone ../Mixamo first.")
+    print("Error! download Mixamo/fbx_withSkin/bigvegas_Walking.fbx first!")
     os._exit(0)
 
 import numpy as np

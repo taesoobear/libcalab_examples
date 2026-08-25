@@ -20,7 +20,7 @@ useFSAA=False
 
 _layoutHeight=500
 _capture_frame=None
-
+_ui_scale=1
 # private 
 doNotGarbageCollect=[] # list of instances which should not be garbage collected. (e.g. loaders)
 _mouseInfo=None
@@ -1705,7 +1705,7 @@ set /p res=Press Enter to continue.
     subprocess.run(ps_cmd, check=True)
 
 def createMainWin(*args):
-    global _window_data, _layout,_luaEnv
+    global _window_data, _layout,_luaEnv, _ui_scale
     RE_consolemode.createMainWin()
 
     _luaEnv=m.getPythonWin()
@@ -1771,6 +1771,12 @@ def createMainWin(*args):
     _layout= Layout()
     _updateView()
     _loadBG_default()
+
+    if platform.system() == "Darwin":
+        #from AppKit import NSScreen
+        #_ui_scale= int(NSScreen.mainScreen().backingScaleFactor())
+        render_width=_window_data.window.getWidth()
+
     return _layout
 
 def ogreRootSceneNode():
