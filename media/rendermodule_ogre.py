@@ -2419,7 +2419,7 @@ class Timeline:
         global _ui_scale
 
         io = imgui.GetIO()
-        window_height = 40*_ui_scale
+        window_height = 50*_ui_scale
 
 
         imgui.SetNextWindowSize( imgui.ImVec2( io.DisplaySize.x, window_height))
