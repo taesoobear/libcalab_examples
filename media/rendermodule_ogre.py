@@ -1286,7 +1286,7 @@ def namedDraw(typename,*args):
             mat=m.vector3( 0,0.5,0)
         else:
             mat=m.vector3( 0,0,1) 
-        fontSize=8
+        fontSize=8*_ui_scale
         _objectList.registerLayoutElement(nameid+"_mt", "MovableText", nameid, mat,fontSize, pos+m.vector3(0,15.0/8.0*fontSize,0))
 
 def drawBillboard(datapoints, *args):
@@ -1390,10 +1390,11 @@ def _world_to_screen(world_pos):
 def ui_callback(): # handle ui events and draw texts
     global _layout, _mouseInfo, _window_data,_softKill,_drawOutput,_outputs, _layoutHeight, _timeline, _capture_frame 
     # This function is called every frame to draw your custom ImGui elements
-
+    io = imgui.GetIO()
+    io.FontGlobalScale = _ui_scale
     #imgui.NewFrame()
     #imgui.ShowDemoWindow() # Displays the standard Dear ImGui demo window
-    imgui.SetNextWindowSize(imgui.ImVec2(200, 200), imgui.Cond_Once)
+    imgui.SetNextWindowSize(imgui.ImVec2(200*_ui_scale, 200*_ui_scale), imgui.Cond_Once)
     imgui.SetNextWindowPos(imgui.ImVec2(0,0))
 
     # draw texts
@@ -1412,7 +1413,7 @@ def ui_callback(): # handle ui events and draw texts
     # ImGui UI
     # -----------------------------
     if imgui.Begin("Menu"):
-        imgui.SetWindowSize(imgui.ImVec2(300, _layoutHeight));
+        imgui.SetWindowSize(imgui.ImVec2(300*_ui_scale, _layoutHeight*_ui_scale));
         if hasattr(__main__,'onCallback'):
             onCallback=checkedOnCallback
         else:
@@ -1539,10 +1540,10 @@ def ui_callback(): # handle ui events and draw texts
 
         io = imgui.GetIO()
 
-        window_width=300
+        window_width=300*_ui_scale
         imgui.SetNextWindowPos( imgui.ImVec2(io.DisplaySize.x - window_width, 0))
 
-        imgui.SetNextWindowSize( imgui.ImVec2( window_width, 500))
+        imgui.SetNextWindowSize( imgui.ImVec2( window_width, 500*_ui_scale))
         if imgui.Begin("debug output"):
             imgui.Text('use  RE.output("msg key", "msg")')
             imgui.Separator();
@@ -1776,6 +1777,7 @@ def createMainWin(*args):
         #from AppKit import NSScreen
         #_ui_scale= int(NSScreen.mainScreen().backingScaleFactor())
         render_width=_window_data.window.getWidth()
+        _ui_scale=render_width/imsize[0]
 
     return _layout
 
@@ -2413,9 +2415,10 @@ class Timeline:
         self.playing=False
         _timeline=self
     def draw(self):
+        global _ui_scale
 
         io = imgui.GetIO()
-        window_height = 80
+        window_height = 40*_ui_scale
 
 
         imgui.SetNextWindowSize( imgui.ImVec2( io.DisplaySize.x, window_height))

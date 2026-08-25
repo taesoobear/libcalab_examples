@@ -159,7 +159,7 @@ material invisible_shadow_receiver
 }
 material invisible_shadow_caster
 {
-	cast_shadow on
+	transparency_casts_shadows on
 	technique
 	{
 		pass
