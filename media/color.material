@@ -306,19 +306,17 @@ material blue_transparent
 
 material use_vertexcolor_only
 {
-    technique
-    {
-        pass
-        {
-		lighting off
-		diffuse vertexcolour
-		// Texture unit 0
-		texture_unit
+	receive_shadows off
+	technique
+	{
+		pass
 		{
-			colour_op_ex source1  src_diffuse  src_diffuse
-		}        
+			lighting off	
+			scene_blend alpha_blend
+            depth_write off
+            diffuse vertexcolour
+        }
 	}
-    }
 } 
 
 material black

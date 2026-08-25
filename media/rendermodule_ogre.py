@@ -590,6 +590,7 @@ class ObjectList:
                 end=data.row(i*2+1).toVector3(0)
                 line.addChainElement(i, Ogre.BillboardChain_Element(start._toOgre(), thickness, tu1, Ogre.ColourValue(c.x, c.y, c.z, 1), Ogre.Quaternion(1,0,0,0)));
                 line.addChainElement(i, Ogre.BillboardChain_Element(end._toOgre(), thickness, tu2, Ogre.ColourValue(c.x, c.y, c.z, 1), Ogre.Quaternion(1,0,0,0)));
+            line.setUseVertexColours(True)
             line.setMaterialName('use_vertexcolor_only', Ogre.RGN_DEFAULT)
             return line
         elif tn.startswith('PointList'):
