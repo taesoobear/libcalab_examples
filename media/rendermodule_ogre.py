@@ -1997,10 +1997,10 @@ def _updateView():
     cam=_window_data.camera
     camNode=cam.getParentSceneNode()
 
-    if False:
+    if True:
         matView=m.matrix4()
         viewpoint().GetViewMatrix(matView)
-        matTF=m.transf(matView)
+        matTF=m.transf(matView).inverse()
         camNode.setPosition(matTF.translation._toOgre())
         camNode.setOrientation(matTF.rotation._toOgre())
     else:
@@ -3487,5 +3487,18 @@ def setViewYup(YUP=True):
                 m.quater(math.radians(90), m.vector3(1, 0, 0))
             )
 
+class _MotionPanel_MotionWin:
+    def __init__(self):
+        pass
+    def motionWin(self):
+        return self
+    def playFrom(self, iframe):
+        global _timeline
+        if _timeline is not None:
+            _timeline.changeCurrFrame(0)
+            _timeline.playing=True
+
+def motionPanel():
+    return _MotionPanel_MotionWin()
 def setViewZup():
     setViewYup(False)
