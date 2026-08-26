@@ -176,7 +176,6 @@ class GaussianSplat:
         pos_elem = vdecl.findElementBySemantic(Ogre.VES_POSITION)
         mPositions=np.zeros((numVertices,3)).astype(np.half)
         ptr=vertexBuffer.lock(Ogre.HardwareBuffer.HBL_READ_ONLY)
-        print(vertexBuffer.getSizeInBytes()/ numVertices)
 
         u16_ptr = ctypes.cast(int(ptr), ctypes.POINTER(ctypes.c_uint16))
 
@@ -212,13 +211,20 @@ class GaussianSplat:
         ctypes.memmove(int(buf), indices_np.ctypes.data, indices_np.nbytes)
         idata.indexBuffer.unlock()
 
+
     def __init__(self, node_name, filename, parentSceneNode=None):
         global _cameraEventReceivers, _frameMoveObjects2
         _cameraEventReceivers.append(weakref.ref(self))
         _frameMoveObjects2.append(weakref.ref(self))
         self.updateNecessary=True
         self.isVisible=True
+
+        sm=ogreSceneManager()
+        if sm.hasSceneNode(node_name):
+            removeEntity(node_name)
         entity_name="_entity_"+node_name
+        if sm.hasEntity(entity_name):
+            sm.destroyEntity(entity_name)
         if isinstance(filename,  tuple):
             xyz, color, covd, covu=filename
             self.positions=xyz.astype(np.float32)
@@ -247,18 +253,22 @@ class GaussianSplat:
         self.node=rootnode.createChildSceneNode(node_name)
         self.node.attachObject(self.entity)
         self.node._update(True,False)
+        self._enforce_update()
     def setVisible(self, bvalue):
         self.isVisible=bvalue
         self.node.setVisible(bvalue)
-    def __del__(self):
+    def release(self):
+        global _cameraEventReceivers, _frameMoveObjects2, removeEntity
         if removeEntity is not None:
-            removeEntity(self.node)
-        global _cameraEventReceivers, _frameMoveObjects2
+            node = getattr(self, "node", None)
+            if node is not None:
+                removeEntity(node)
         if _frameMoveObjects2 is not None:
             _frameMoveObjects2= [r for r in _frameMoveObjects2 if r() is not self]
         if _cameraEventReceivers is not None:
             # self 삭제.
             _cameraEventReceivers= [r for r in _cameraEventReceivers if r() is not self]
+
     def exportAsOgreMesh(self, filename):
         ser = Ogre.MeshSerializer()
         assert(filename[-5:]=='.mesh')
@@ -267,22 +277,24 @@ class GaussianSplat:
         if self.updateNecessary and self.isVisible:
             #print('update', self.node.getName())
             global _window_data
-            self.updateNecessary=False
-            cam = _window_data.camera
-            camPos=cam.getDerivedPosition()
-            if True:
-                localCamPos=self.node._getDerivedOrientation().inverse()*m.vector3(camPos.x, camPos.y, camPos.z)
-                distances=self.positions@localCamPos.array
-                idx=np.argsort(distances).astype(np.int32)
-                idata=self.idata
-                numVertices=self.positions.shape[0]
-                buf = idata.indexBuffer.lock(
-                    0,
-                    numVertices * idata.indexBuffer.getIndexSize(),
-                    Ogre.HardwareBuffer.HBL_DISCARD
-                )
-                ctypes.memmove(int(buf), idx.ctypes.data, idx.nbytes)
-                idata.indexBuffer.unlock()
+            self._enforce_update()
+    def _enforce_update(self):
+        self.updateNecessary=False
+        cam = _window_data.camera
+        camPos=cam.getDerivedPosition()
+        if True:
+            localCamPos=self.node._getDerivedOrientation().inverse()*m.vector3(camPos.x, camPos.y, camPos.z)
+            distances=self.positions@localCamPos.array
+            idx=np.argsort(distances).astype(np.int32)
+            idata=self.idata
+            numVertices=self.positions.shape[0]
+            buf = idata.indexBuffer.lock(
+                0,
+                numVertices * idata.indexBuffer.getIndexSize(),
+                Ogre.HardwareBuffer.HBL_DISCARD
+            )
+            ctypes.memmove(int(buf), idx.ctypes.data, idx.nbytes)
+            idata.indexBuffer.unlock()
 
 
     def _update(self):
@@ -412,7 +424,22 @@ def removeEntity(uid: str|Ogre.Node|Ogre.SceneNode|SceneNodeWrap):
             if True:
                 while(node.numAttachedObjects()):
                     mo=node.detachObject(0)
-                    ogreSceneManager().destroyMovableObject(mo);
+
+                    mot=mo.getMovableType()
+
+                    #Entity
+                    #Light
+                    #Camera
+                    #BillboardSet
+                    #ParticleSystem
+                    #ManualObject
+
+                    if mot=='Entity':
+                        ogreSceneManager().destroyEntity(mo)
+                    elif mot == "ManualObject":
+                        ogreSceneManager().destroyManualObject(mo)
+                    else:
+                        ogreSceneManager().destroyMovableObject(mo);
 
                 while(node.numChildren()):
                     sceneNode=getSceneNode(node.getChild(0).getName())
@@ -1916,7 +1943,7 @@ def ogreSceneManager():
 
 _lastCamPos=Ogre.Vector3(1e5,0,0)
 def renderOneFrame(check):
-    global _start_time ,_softKill, _capture_frame
+    global _start_time ,_softKill, _capture_frame, _frameMoveObjects, _frameMoveObjects2
     ctime=time.time()
     elapsed =  ctime- _start_time
     if _capture_frame is not None:
@@ -1931,12 +1958,17 @@ def renderOneFrame(check):
         if hasattr(__main__,'frameMove'):
             __main__.frameMove(elapsed)
 
+        _frameMoveObjects= [r for r in _frameMoveObjects if r() is not None]
+        _frameMoveObjects2= [r for r in _frameMoveObjects2 if r() is not None]
+
         for i, v in enumerate(_frameMoveObjects):
             obj=v()
-            obj.frameMove(elapsed)
+            if obj is not None:
+                obj.frameMove(elapsed)
         for i, v in enumerate(_frameMoveObjects2):
             obj=v()
-            obj.frameMove(elapsed)
+            if obj is not None:
+                obj.frameMove(elapsed)
 
         global _window_data, _lastCamPos, _cameraEventReceivers,_activeBillboards
         cam = _window_data.camera
@@ -1980,6 +2012,7 @@ def renderOneFrame(check):
         return False
     if _softKill:
         return False
+
     return True
 
 
@@ -2224,7 +2257,10 @@ if True:
         return np.diag(Cov), np.array([Cov[0, 1], Cov[0, 2], Cov[1, 2]], dtype=np.float32)
 
     def splat_to_mesh(mesh_name, xyz, color, covd, covu):
-        mesh = Ogre.MeshManager.getSingleton().createManual(mesh_name, Ogre.RGN_DEFAULT)
+        mm=Ogre.MeshManager.getSingleton()
+        if mm.resourceExists(mesh_name):
+            mm.remove(mesh_name)
+        mesh = mm.createManual(mesh_name, Ogre.RGN_DEFAULT)
         sub = mesh.createSubMesh()
         sub.useSharedVertices = True
         sub.operationType = Ogre.RenderOperation.OT_POINT_LIST
