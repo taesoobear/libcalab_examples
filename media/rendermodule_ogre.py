@@ -814,6 +814,108 @@ class FltkRenderer:
         ogre_ray=cam.getCameraToViewportRay(tx , ty);
         ray.set(_toBaseP(ogre_ray.getOrigin()), _toBaseP(ogre_ray.getDirection()));
 
+    def createDynamicTexture(self, material_name, img):
+        """
+        img: uint8 numpy array
+             [H, W, 3] RGB
+             [H, W, 4] RGBA
+        """
+        if isinstance(img,m.CImage):
+            img=img.array
+
+        name=material_name +"_texture"
+        img = np.ascontiguousarray(img, dtype=np.uint8)
+        h, w = img.shape[:2]
+
+        if img.shape[2] == 3:
+            fmt = Ogre.PF_BYTE_RGB
+        elif img.shape[2] == 4:
+            fmt = Ogre.PF_BYTE_RGBA
+        else:
+            raise ValueError("img must have 3 or 4 channels")
+
+        
+        
+        tm=Ogre.TextureManager.getSingleton()
+        if tm.resourceExists(name):
+            tm.remove(name)
+        tex = tm.createManual(
+            name,
+            Ogre.ResourceGroupManager.DEFAULT_RESOURCE_GROUP_NAME,
+            Ogre.TEX_TYPE_2D,
+            w,
+            h,
+            1,
+            fmt,
+            Ogre.TU_DYNAMIC_WRITE_ONLY_DISCARDABLE
+        )
+
+        pixel_buffer = tex.getBuffer()
+
+        src = Ogre.PixelBox(
+            w,
+            h,
+            1,
+            fmt,
+            memoryview(img)
+        )
+
+        pixel_buffer.blitFromMemory(src)
+
+        if True:
+            # also create material 
+            if fmt == Ogre.PF_BYTE_RGB:
+                pass
+
+            mm = Ogre.MaterialManager.getSingleton()
+
+            if mm.resourceExists(material_name):
+                mm.remove(material_name)
+
+            mat = mm.create(
+                material_name,
+                Ogre.ResourceGroupManager.DEFAULT_RESOURCE_GROUP_NAME
+            )
+
+            tech = mat.getTechnique(0)
+            p = tech.getPass(0)
+
+            p.setLightingEnabled(False)
+
+            tus = p.createTextureUnitState()
+            tus.setTextureName(name)
+
+            mat.load()
+
+        return tex
+
+    def updateDynamicTexture(self, material_name, img):
+
+        name=material_name +"_texture"
+        tm=Ogre.TextureManager.getSingleton()
+        if tm.resourceExists(name):
+            tex = Ogre.TextureManager.getSingleton().getByName(name)
+
+        if isinstance(img,m.CImage):
+            img=img.array
+        img = np.ascontiguousarray(img, dtype=np.uint8)
+
+        h, w = img.shape[:2]
+
+        if img.shape[2] == 3:
+            fmt = Ogre.PF_BYTE_RGB
+        else:
+            fmt = Ogre.PF_BYTE_RGBA
+
+        src = Ogre.PixelBox(
+            w,
+            h,
+            1,
+            fmt,
+            memoryview(img)
+        )
+
+        tex.getBuffer().blitFromMemory(src)
 class Layout(FltkRenderer): 
     def __init__(self):
         self.widgets=[]
@@ -1334,13 +1436,8 @@ def WRLloader(filename, *kwargs):
 def dummyOnCallback(w, userData):
     pass
 def checkedOnCallback(w, userData):
-    try:
+    if hasattr(__main__, "onCallback"):
         __main__.onCallback(w, userData)
-    except Exception as e:
-        print(e)
-        print(w.type_name)
-        traceback.print_exc()  # optional, print the stack
-        pdb.post_mortem(e.__traceback__)  # drop into pdb at the original exception
 def checkedHandleRendererEvent(ev, x, y):
     global _prevMouse
     if x!=_prevMouse[0]  or y!=_prevMouse[1] or ev=='PUSH' or ev=='RELEASE':
@@ -1413,8 +1510,8 @@ def ui_callback(): # handle ui events and draw texts
     # -----------------------------
     # ImGui UI
     # -----------------------------
+    imgui.SetNextWindowSize(imgui.ImVec2(230*_ui_scale, _layoutHeight*_ui_scale), imgui.Cond_Once);
     if imgui.Begin("Menu"):
-        imgui.SetWindowSize(imgui.ImVec2(230*_ui_scale, _layoutHeight*_ui_scale));
         if hasattr(__main__,'onCallback'):
             onCallback=checkedOnCallback
         else:
@@ -1548,7 +1645,7 @@ def ui_callback(): # handle ui events and draw texts
         window_width=300*_ui_scale
         imgui.SetNextWindowPos( imgui.ImVec2(io.DisplaySize.x - window_width, 0))
 
-        imgui.SetNextWindowSize( imgui.ImVec2( window_width, 500*_ui_scale))
+        imgui.SetNextWindowSize( imgui.ImVec2( window_width, 500*_ui_scale), imgui.Cond_Once)
         if imgui.Begin("debug output"):
             imgui.Text('use  RE.output("msg key", "msg")')
             imgui.Separator();
@@ -1556,6 +1653,14 @@ def ui_callback(): # handle ui events and draw texts
                 imgui.Text(f"{key}\t{_outputs[key]}")
 
         imgui.End()
+
+    imgui.End()
+
+
+    if hasattr(__main__, "onImGui"):
+        hovered3=__main__.onImGui(imgui)
+        hovered=hovered or hovered3
+
 
     if _mouseInfo is None:
         _mouseInfo=lua.Table()
@@ -1625,7 +1730,7 @@ def ui_callback(): # handle ui events and draw texts
         _mouseInfo =None
 
 
-    imgui.End()
+
     # -----------------------------
     # Rendering
     # -----------------------------
@@ -1719,6 +1824,7 @@ def createMainWin(*args):
     # (we need to override only those functions used in the RE_consolemode.SceneGraph class.)
     m.getPythonWin=_getPythonWin      
     m.FltkRenderer=_getPythonWin
+    m.renderer=_getPythonWin
     m.getSceneNode=getSceneNode
     m.renderOneFrame=renderOneFrame
     m.ObjectList=ObjectList
@@ -1844,8 +1950,8 @@ def renderOneFrame(check):
                     if vv.handleFrameMove is not None:
                         vv.handleFrameMove(vv, elapsed)
 
-    evt=ohi.window_draw("Ogre ImGui")
     _updateView()
+    evt=ohi.window_draw("Ogre ImGui")
 
     if _capture_frame is not None:
         window=_window_data.window
@@ -2409,7 +2515,10 @@ def addFrameMoveObject(obj):
 
 
 class Timeline:
-    def __init__(self, numframes, frametime=1.0 / 60.0):
+    def __init__(self, numframes, frametime=1.0 / 60.0, _unused_arg=None):
+        if _unused_arg is not None:
+            numframes=frametime
+            frametime=_unused_arg
         global _timeline
         addFrameMoveObject(self)
         self.totalTime = numframes
@@ -2417,6 +2526,7 @@ class Timeline:
         self.numframes=numframes
         self.currFrame=0
         self._currFrame=0
+        self._lastPlayed=-1
         self.playing=False
         _timeline=self
     def draw(self):
@@ -2451,19 +2561,20 @@ class Timeline:
 
 
 
-            
+            if platform.system() == "Darwin":
+                shortcut_text="Alt+P or Alt+0"
+            else:
+                shortcut_text="Ctrl+P or Alt+0"
             # play / pause
             if imgui.Button("Pause" if self.playing else "Play") or shortcut:
                 self.playing = not self.playing
             imgui.SameLine()
 
 
-            if platform.system() == "Darwin":
-                imgui.TextDisabled("Alt+P")
-            else:
-                imgui.TextDisabled("Ctrl+P")
+            imgui.TextDisabled(shortcut_text)
             imgui.SameLine()
 
+            imgui.SetNextItemWidth(-1)
             # timeline slider
             changed, frame = imgui.SliderInt(
                 "",
@@ -2487,7 +2598,9 @@ class Timeline:
     def frameMove(self, elapsed):
         if self.playing:
             self.currFrame=int(self._currFrame)
-            __main__.onFrameChanged(self.currFrame)
+            if self.currFrame!=self._lastPlayed:
+                __main__.onFrameChanged(self.currFrame)
+            self._lastPlayed=self.currFrame
             self._currFrame+=elapsed/self.frametime
             if self._currFrame>=self.numframes:
                 self._currFrame=self.numframes-1
@@ -2502,6 +2615,7 @@ class Timeline:
         self.currFrame=iframe
         self._currFrame=iframe
         __main__.onFrameChanged(self.currFrame)
+        self._lastPlayed=self.currFrame
 
     def numFrames(self):
         return self.totalTime
