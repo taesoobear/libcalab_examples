@@ -43,6 +43,7 @@ _prevMouse=(0,0,1)
 _outputs={} # debug outputs
 _drawOutput=False
 _timeline=None
+_VRML_meshEntities=weakref.WeakKeyDictionary()
 doNotGarbageCollect=[] # list of instances which should not be garbage collected. (e.g. loaders)
 
 SceneGraph=RE_consolemode.SceneGraph
@@ -1063,100 +1064,104 @@ class MeshToEntity:
         else:
             vertices=m.matrixn()
             indices=m.intvectorn()
-            numSubMeshes=self.meshToEntity_cpp.getRawData(mesh, 0, vertices, indices)
 
-            assert(numSubMeshes==1)
 
             # use low-level api
             mMesh= Ogre.MeshManager.getSingleton().createManual(meshId, Ogre.RGN_DEFAULT);
 
-            sub = mMesh.createSubMesh();
-            sub.useSharedVertices = True
-            sub.operationType = Ogre.RenderOperation.OT_TRIANGLE_LIST
-            sub.createVertexData()
+            numSubMeshes=self.meshToEntity_cpp.getRawData(mesh, 0, vertices, indices)
 
-            sub.vertexData.vertexCount=vertices.rows()
+            for isubmesh in range(numSubMeshes):
+                if isubmesh!=0:
+                    self.meshToEntity_cpp.getRawData(mesh, isubmesh, vertices, indices)
 
-            decl = sub.vertexData.vertexDeclaration
-            hbm = Ogre.HardwareBufferManager.getSingleton()
-            source = 0
-            buffers=[]
-            currentColumn=3
-            xyz=vertices.sub(0,0,0,3)
-            numVertices=vertices.rows()
-            buffers.append((xyz.array.astype(np.half), Ogre.VET_HALF3, Ogre.VES_POSITION,0))
-            if useNormal:
-                buffers.append((vertices.sub(0,0,currentColumn, currentColumn+3).array.astype(np.half), Ogre.VET_HALF3, Ogre.VES_NORMAL,0))
-                currentColumn+=3
-            if useTexCoord:
-                buffers.append((vertices.sub(0,0,currentColumn, currentColumn+2).array.astype(np.half), Ogre.VET_HALF2, Ogre.VES_TEXTURE_COORDINATES,0))
-                currentColumn+=2
+                sub = mMesh.createSubMesh();
+                sub.useSharedVertices = False
+                sub.operationType = Ogre.RenderOperation.OT_TRIANGLE_LIST
+                sub.createVertexData()
 
-            #usage=Ogre.HBU_CPU_ONLY
-            usage=Ogre.HBU_GPU_ONLY
-            if dynamicUpdate:
+                sub.vertexData.vertexCount=vertices.rows()
+
+                decl = sub.vertexData.vertexDeclaration
+                hbm = Ogre.HardwareBufferManager.getSingleton()
+                source = 0
+                buffers=[]
+                currentColumn=3
+                xyz=vertices.sub(0,0,0,3)
+                numVertices=vertices.rows()
+                buffers.append((xyz.array.astype(np.half), Ogre.VET_HALF3, Ogre.VES_POSITION,0))
+                if useNormal:
+                    buffers.append((vertices.sub(0,0,currentColumn, currentColumn+3).array.astype(np.half), Ogre.VET_HALF3, Ogre.VES_NORMAL,0))
+                    currentColumn+=3
+                if useTexCoord:
+                    buffers.append((vertices.sub(0,0,currentColumn, currentColumn+2).array.astype(np.half), Ogre.VET_HALF2, Ogre.VES_TEXTURE_COORDINATES,0))
+                    currentColumn+=2
+
                 #usage=Ogre.HBU_CPU_ONLY
-                usage=Ogre.HBU_CPU_TO_GPU
+                usage=Ogre.HBU_GPU_ONLY
+                if dynamicUpdate:
+                    #usage=Ogre.HBU_CPU_ONLY
+                    usage=Ogre.HBU_CPU_TO_GPU
 
-            for data, vtype, vusage, vindex in buffers:
-                decl.addElement(source, 0, vtype, vusage, vindex)
-                hwbuf = hbm.createVertexBuffer(decl.getVertexSize(source), numVertices, usage)
-                sub.vertexData.vertexBufferBinding.setBinding(source, hwbuf)
-                hwbuf.writeData(0, hwbuf.getSizeInBytes(), data)
-                source += 1
+                for data, vtype, vusage, vindex in buffers:
+                    decl.addElement(source, 0, vtype, vusage, vindex)
+                    hwbuf = hbm.createVertexBuffer(decl.getVertexSize(source), numVertices, usage)
+                    sub.vertexData.vertexBufferBinding.setBinding(source, hwbuf)
+                    hwbuf.writeData(0, hwbuf.getSizeInBytes(), data)
+                    source += 1
 
-            mMesh._setBounds(Ogre.AxisAlignedBox(xyz.array.min(axis=0), xyz.array.max(axis=0))) # pylint: disable=protected-access
-            radius = np.linalg.norm(xyz.array, axis=0).max()
-            mMesh._setBoundingSphereRadius(float(radius))
-            vertexBuffer = sub.vertexData.vertexBufferBinding.getBuffer(0);
-            if False:
-                #debug code
-                pos_elem = decl.findElementBySemantic(Ogre.VES_POSITION)
-                mPositions=np.zeros((numVertices,3)).astype(np.half)
-                ptr=vertexBuffer.lock(Ogre.HardwareBuffer.HBL_READ_ONLY)
-                print(vertexBuffer.getSizeInBytes()/ numVertices)
+                mMesh._setBounds(Ogre.AxisAlignedBox(xyz.array.min(axis=0), xyz.array.max(axis=0))) # pylint: disable=protected-access
+                radius = np.linalg.norm(xyz.array, axis=0).max()
+                mMesh._setBoundingSphereRadius(float(radius))
+                vertexBuffer = sub.vertexData.vertexBufferBinding.getBuffer(0);
+                if False:
+                    #debug code
+                    pos_elem = decl.findElementBySemantic(Ogre.VES_POSITION)
+                    mPositions=np.zeros((numVertices,3)).astype(np.half)
+                    ptr=vertexBuffer.lock(Ogre.HardwareBuffer.HBL_READ_ONLY)
+                    print(vertexBuffer.getSizeInBytes()/ numVertices)
 
-                u16_ptr = ctypes.cast(int(ptr), ctypes.POINTER(ctypes.c_uint16))
+                    u16_ptr = ctypes.cast(int(ptr), ctypes.POINTER(ctypes.c_uint16))
 
-                # zero-copy uint16 array
-                raw = np.ctypeslib.as_array(
-                    u16_ptr, shape=(numVertices, 3)
+                    # zero-copy uint16 array
+                    raw = np.ctypeslib.as_array(
+                        u16_ptr, shape=(numVertices, 3)
+                    )
+
+                    # reinterpret uint16 → float16
+                    mPositions = raw.view(np.float16).copy()
+
+                    vertexBuffer.unlock()
+                    print(mPositions, xyz)
+                    pdb.set_trace()
+
+                # create index buffer
+                idata = sub.indexData;
+                self.idata=idata
+                indexCount=indices.size()
+                idata.indexCount = indexCount;
+                mIndexBuffer = vertexBuffer.getManager().createIndexBuffer(Ogre.HardwareIndexBuffer.IT_32BIT, indexCount, usage)
+                idata.indexBuffer = mIndexBuffer;
+
+                indices_np= indices.array
+
+                buf = idata.indexBuffer.lock(
+                    0,
+                    indexCount * idata.indexBuffer.getIndexSize(),
+                    Ogre.HardwareBuffer.HBL_DISCARD
                 )
+                ctypes.memmove(int(buf), indices_np.ctypes.data, indices_np.nbytes)
+                idata.indexBuffer.unlock()
 
-                # reinterpret uint16 → float16
-                mPositions = raw.view(np.float16).copy()
+            if False:
 
-                vertexBuffer.unlock()
-                print(mPositions, xyz)
-                pdb.set_trace()
+                if not mMesh.isPreparedForShadowVolumes():
+                    mMesh.prepareForShadowVolume()
 
-            # create index buffer
-            idata = sub.indexData;
-            self.idata=idata
-            indexCount=indices.size()
-            idata.indexCount = indexCount;
-            mIndexBuffer = vertexBuffer.getManager().createIndexBuffer(Ogre.HardwareIndexBuffer.IT_32BIT, indexCount, usage)
-            idata.indexBuffer = mIndexBuffer;
+                mMesh.freeEdgeList()
+                mMesh.buildEdgeList()
 
-            indices_np= indices.array
-
-            buf = idata.indexBuffer.lock(
-                0,
-                indexCount * idata.indexBuffer.getIndexSize(),
-                Ogre.HardwareBuffer.HBL_DISCARD
-            )
-            ctypes.memmove(int(buf), indices_np.ctypes.data, indices_np.nbytes)
-            idata.indexBuffer.unlock()
-
-        if False:
-
-            if not mMesh.isPreparedForShadowVolumes():
-                mMesh.prepareForShadowVolume()
-
-            mMesh.freeEdgeList()
-            mMesh.buildEdgeList()
-
-        mMesh.load()
+            mMesh.load()
 
         self.mMesh=mMesh
     def createEntity(self, entityName,  materialName='lightgrey'):
@@ -2642,7 +2647,7 @@ class PLDPrimSkin:
         self.thickness=3 # 3cm
         self.materialName='solidwhite'
     def setScale(self, s,s2=None,s3=None):
-        self.scale*=s
+        self.scale=s
         self.redraw()
     def setPose(self, pose):
         self.fkSolver.setPose(pose)
@@ -2650,17 +2655,189 @@ class PLDPrimSkin:
     def setPoseDOF(self, posedof):
         self.fkSolver.setPoseDOF(posedof)
         self.redraw()
-    def redraw(self):
+    def setSamePose(self, fkSolver):
         lines=m.vector3N()
-        lines.reserve(self.fkSolver.numBone())
-        for i in range(2, self.fkSolver.numBone()):
-            lines.pushBack(self.fkSolver.globalFrame(i).translation)
-            lines.pushBack(self.fkSolver.globalFrame(self.loader.bone(i).parent().treeIndex()).translation)
+        lines.reserve(fkSolver.numBone())
+        for i in range(2, fkSolver.numBone()):
+            lines.pushBack(fkSolver.globalFrame(i).translation)
+            lines.pushBack(fkSolver.globalFrame(self.loader.bone(i).parent().treeIndex()).translation)
         drawBillboard( lines.matView()*self.scale,  self.uid, self.materialName, self.thickness, 'BillboardLineList' )
+    def setMaterial(self, mat):
+        self.materialName=mat
+        self.redraw()
+    def redraw(self):
+        self.setSamePose(self.fkSolver)
+
+def VRMLloader_updateMeshEntity(l):
+    global _VRML_meshEntities
+    if l in _VRML_meshEntities:
+        pdb.set_trace()
+        return
+    arr=[None]*l.numBone()
+    _VRML_meshEntities[l]=arr
+
+    for i in range(1, l.numBone()):
+        ll=l.VRMLbone(i)
+
+        oo=arr[i] 
+        if oo is None:
+            oo=lua.Table()
+            arr[i]=oo
+
+            useTexCoord = True
+            buildEdgeList = False
+            useColor = False
+
+
+            meshToEntity = MeshToEntity(
+                ll.getMesh(),
+                m.generateUniqueName(),
+                buildEdgeList,
+                False,
+                True,
+                useTexCoord,
+                useColor
+            )
+
+            oo.meshToEntity=meshToEntity
+    return arr
+
+class PLDPrimVRML(PLDPrimSkin):
+    def __init__(self, pVRMLL, bDrawSkeleton):
+        super().__init__(pVRMLL)
+
+        arr=VRMLloader_updateMeshEntity(pVRMLL)
+        self.material='lightgrey'
+
+        self.mVRMLL = pVRMLL
+        self.mDrawSkel = None
+
+        self.m_pSceneNode = ogreRootSceneNode().createChildSceneNode(m.generateUniqueName())
+        self.mSceneNodes = [None] * pVRMLL.numBone()
+        self.mEntities=[None]* pVRMLL.numBone()
+
+
+        for i in range(1, len(self.mSceneNodes)):
+            ll = self.mVRMLL.getBoneByTreeIndex(i)
+
+            if ll.hasShape():
+                self.mSceneNodes[i] = self.m_pSceneNode.createChildSceneNode()
+
+                entity = arr[i].meshToEntity.createEntity( m.generateUniqueName(), self.material)
+                self.mSceneNodes[i].attachObject(entity)
+                self.mEntities[i]=entity
+            else:
+                self.mSceneNodes[i] = None
+
+        self._updateEntities(self.mVRMLL.fkSolver())
+
+        if bDrawSkeleton:
+            self.mDrawSkel = PLDPrimSkin( pVRMLL)
+            self.mDrawSkel.setMaterial('solidred_noztest')
+
+    def setScale(self, s,sy=None, sz=None):
+
+        if isinstance(s, m.vector3):
+            self.m_pSceneNode .setScale(s)
+            if self.mDrawSkel is not None:
+                self.mDrawSkel.setScale(s)
+        else:
+            self.m_pSceneNode .setScale(m.vector3(s,s,s))
+            if self.mDrawSkel is not None:
+                self.mDrawSkel.setScale(s)
+
+
+    def setPoseDOF(self, poseDOF):
+        self.setPose( self.mVRMLL.dofInfo.setDOF(poseDOF))
+
+    def setSphericalQ(self, x):
+        self.fkSolver.setSphericalQ(x)
+        self._updateEntities(self.fkSolver)
+
+    def setSamePose(self, x):
+        # Python에서는 C++ overload를 하나로 처리
+        #
+        # ScaledBoneKinematics
+        # BoneForwardKinematics
+        if isinstance(x, IK_sdls.LoaderToTree):
+            nb = self.fkSolver.getSkeleton().numBone()
+
+            for i in range(1, nb):
+                self.fkSolver._global(i).assign(
+                    x.globalFrame(i)
+                )
+
+            self._updateEntities(self.fkSolver)
+
+            if self.mDrawSkel is not None:
+                self.mDrawSkel.setSamePose(self.fkSolver)
+
+        else:
+            self.fkSolver.assign(x)
+            self._updateEntities(self.fkSolver)
+
+            if self.mDrawSkel is not None:
+                self.mDrawSkel.setSamePose(self.fkSolver)
+
+    def redraw(self):
+        self._updateEntities(self.fkSolver)
+        if self.mDrawSkel is not None:
+            self.mDrawSkel.setSamePose(self.fkSolver)
 
 
 
-def createSkin(loader:m.MotionLoader):
+    def setThickness(self, thick):
+        if self.mDrawSkel is not None:
+            self.mDrawSkel.setThickness(thick)
+
+    def _updateEntities(self, fk):
+        for i in range(1, len(self.mSceneNodes)):
+            ll = self.mVRMLL.getBoneByTreeIndex(i)
+
+            if ll.hasShape():
+                ptr = self.mSceneNodes[i]
+
+                if ptr is not None:
+                    q = fk.globalFrame(i).rotation
+                    p = fk.globalFrame(i).translation
+
+                    if q.x == q.x and p.x == p.x:
+                        ptr.setScale(1.0, 1.0, 1.0)
+                        ptr.setOrientation(q)
+                        ptr.setPosition(p)
+                    else:
+                        print("PLDPrimVRML nan pose")
+
+
+    def setMaterial(self, *args):
+        if len(args) == 1:
+            mat = args[0]
+
+            for i in range(1, len(self.mSceneNodes)):
+                if self.mEntities[i] is not None:
+                    obj = self.mEntities[i]
+                    obj.setMaterialName(mat)
+
+        elif len(args) == 2:
+            i, mat = args
+
+            if (
+                self.mSceneNodes[i] is not None
+                and self.mSceneNodes[i].numAttachedObjects()
+            ):
+                obj = self.mSceneNodes[i].getAttachedObject(0)
+                obj.setDatablockOrMaterialName(mat)
+
+        else:
+            raise TypeError("setMaterial(mat) or setMaterial(i, mat)")
+
+def createVRMLskin(loader:m.VRMLloader, drawSkeleton=False):
+    return PLDPrimVRML(loader, drawSkeleton)
+
+def createSkin(loader, options=None, **kwargs):
+    if options is None and kwargs is not None:
+        options=kwargs
+    #if isinstance(loader, m.VRMLloader):  -> use createVRMLskin manually.
     return PLDPrimSkin(loader)
 
 def createFBXskin(fbx:FBXloader, drawSkeleton=None, **kwargs):

@@ -26,12 +26,10 @@ mMotionDOFcontainer=m.MotionDOFcontainer(mLoader.dofInfo,"work/taesooLib/Resourc
 mMotionDOF=mMotionDOFcontainer.mot
 
 # translate the motion 7cm up
-for i in range(0, mMotionDOF.rows()) :
-    mMotionDOF.matView().set(i, 1, mMotionDOF.matView()(i,1)+0.07)
+mMotionDOF.matView().array[:,1]+=0.01
 
 
-#mSkin= RE.createVRMLskin(mLoader, False);    # to create character 
-mSkin=RE.createSkin(mLoader)
+mSkin= RE.createVRMLskin(mLoader, True);    # to create character 
 mSkin.setScale(100,100,100);                    # motion data is in meter unit while visualization uses cm unit.
 mSkin.setPoseDOF(mMotionDOF.row(0));
 
