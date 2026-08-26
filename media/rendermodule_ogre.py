@@ -1943,7 +1943,7 @@ def ogreSceneManager():
 
 _lastCamPos=Ogre.Vector3(1e5,0,0)
 def renderOneFrame(check):
-    global _start_time ,_softKill, _capture_frame, _frameMoveObjects, _frameMoveObjects2
+    global _start_time ,_softKill, _capture_frame, _frameMoveObjects, _frameMoveObjects2,  _window_data, _lastCamPos, _cameraEventReceivers,_activeBillboards
     ctime=time.time()
     elapsed =  ctime- _start_time
     if _capture_frame is not None:
@@ -1960,6 +1960,7 @@ def renderOneFrame(check):
 
         _frameMoveObjects= [r for r in _frameMoveObjects if r() is not None]
         _frameMoveObjects2= [r for r in _frameMoveObjects2 if r() is not None]
+        _cameraEventReceivers= [r for r in _cameraEventReceivers if r() is not None]
 
         for i, v in enumerate(_frameMoveObjects):
             obj=v()
@@ -1970,7 +1971,6 @@ def renderOneFrame(check):
             if obj is not None:
                 obj.frameMove(elapsed)
 
-        global _window_data, _lastCamPos, _cameraEventReceivers,_activeBillboards
         cam = _window_data.camera
         camPos=cam.getDerivedPosition()
         camDist=(camPos-_lastCamPos).squaredLength()

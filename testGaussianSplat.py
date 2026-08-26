@@ -8,7 +8,7 @@ def onCallback(w, uid):
     global lego
     if w.id()=='delete splat':
         if lego is not None:
-            del lego
+            lego.release()
             lego=None
 
 this=RE.createMainWin()
