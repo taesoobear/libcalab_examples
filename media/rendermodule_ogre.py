@@ -48,6 +48,8 @@ doNotGarbageCollect=[] # list of instances which should not be garbage collected
 
 SceneGraph=RE_consolemode.SceneGraph
 FBXloader=RE_consolemode.FBXloader
+Skins=RE_consolemode.Skins
+createSkin=RE_consolemode.createSkin
 
 def output(key, *args):
     global _outputs
@@ -2759,11 +2761,11 @@ class PLDPrimVRML(PLDPrimSkin):
         #
         # ScaledBoneKinematics
         # BoneForwardKinematics
-        if isinstance(x, IK_sdls.LoaderToTree):
+        if isinstance(x, m.LoaderToTree):
             nb = self.fkSolver.getSkeleton().numBone()
 
             for i in range(1, nb):
-                self.fkSolver._global(i).assign(
+                self.fkSolver.globalFrame(i).assign(
                     x.globalFrame(i)
                 )
 
@@ -2834,11 +2836,6 @@ class PLDPrimVRML(PLDPrimSkin):
 def createVRMLskin(loader:m.VRMLloader, drawSkeleton=False):
     return PLDPrimVRML(loader, drawSkeleton)
 
-def createSkin(loader, options=None, **kwargs):
-    if options is None and kwargs is not None:
-        options=kwargs
-    #if isinstance(loader, m.VRMLloader):  -> use createVRMLskin manually.
-    return PLDPrimSkin(loader)
 
 def createFBXskin(fbx:FBXloader, drawSkeleton=None, **kwargs):
     """
@@ -2866,6 +2863,13 @@ def createFBXskin(fbx:FBXloader, drawSkeleton=None, **kwargs):
     else:
         return FBXloaderSkin(fbx, kwargs)
 
+
+def _createSkin(loader):
+    return PLDPrimSkin(loader)
+RE_consolemode.createVRMLskin=createVRMLskin
+m.createVRMLskin=createVRMLskin
+m.createSkin=_createSkin
+RE_consolemode.createFBXskin=createFBXskin
 
 class FBXloaderSkin:
     def __init__(self, fbxloader, option=None):
@@ -3454,3 +3458,34 @@ def save_jpeg(path: Path, image: np.ndarray, quality: int = 92) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(image).save(path, format="JPEG", quality=quality, subsampling=1)
+
+
+def setViewYup(YUP=True):
+    osm = ogreSceneManager()
+    if not osm:
+        return
+
+    if YUP:
+        viewpoint().setYUp()
+
+        bgnode = osm.getSceneNode("BackgroundNode")
+        bgnode.setOrientation(m.quater(1, 0, 0, 0))
+
+    else:
+        viewpoint().setZUp()
+
+        bgnode = osm.getSceneNode("BackgroundNode")
+        bgnode.setOrientation(m.quater(1, 0, 0, 0))
+        bgnode.rotate(m.quater(math.pi * 0.5, m.vector3(1, 0, 0)))
+
+    if osm.hasSceneNode("LightNode"):
+        lightnode = osm.getSceneNode("LightNode")
+        lightnode.setOrientation(m.quater(1, 0, 0, 0))
+
+        if not YUP:
+            lightnode.rotate(
+                m.quater(math.radians(90), m.vector3(1, 0, 0))
+            )
+
+def setViewZup():
+    setViewYup(False)
