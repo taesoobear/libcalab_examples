@@ -3528,13 +3528,19 @@ class _MotionPanel_MotionWin:
         pass
     def motionWin(self):
         return self
+    def changeCurrFrame(self, iframe):
+        global _timeline
+        if _timeline is not None:
+            _timeline.changeCurrFrame(iframe)
     def playFrom(self, iframe):
         global _timeline
         if _timeline is not None:
-            _timeline.changeCurrFrame(0)
+            _timeline.changeCurrFrame(iframe)
             _timeline.playing=True
 
 def motionPanel():
+    return _MotionPanel_MotionWin()
+def motionWin():
     return _MotionPanel_MotionWin()
 def setViewZup():
     setViewYup(False)

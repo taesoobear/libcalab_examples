@@ -40,5 +40,6 @@ m.viewpoint().update()
 this.updateLayout()
 
 mTimeline=RE.Timeline(mMotionDOF.numFrames(), 1.0/30.0)
+RE.motionWin().changeCurrFrame(10)
 
 m.startMainLoop() # this finishes when program finishes
