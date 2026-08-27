@@ -50,6 +50,7 @@ SceneGraph=RE_consolemode.SceneGraph
 FBXloader=RE_consolemode.FBXloader
 Skins=RE_consolemode.Skins
 createSkin=RE_consolemode.createSkin
+loadRawMotions=RE_consolemode.loadRawMotions
 
 def output(key, *args):
     global _outputs
@@ -3285,7 +3286,7 @@ class FBXloaderSkin:
         for i, node in enumerate(self.nodes):
             prevPos = node[0].getPosition()
 
-            node[0].setScale(x, y, z)
+            node[0].setScale(m.vector3(x, y, z))
 
             node[0].setPosition(
                 prevPos.x / self.scale.x * x,
@@ -3532,6 +3533,12 @@ class _MotionPanel_MotionWin:
         global _timeline
         if _timeline is not None:
             _timeline.changeCurrFrame(iframe)
+    def getCurrFrame(self):
+        global _timeline
+        if _timeline is not None:
+            return _timeline.currFrame
+        else:
+            return 0
     def playFrom(self, iframe):
         global _timeline
         if _timeline is not None:

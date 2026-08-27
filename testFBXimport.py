@@ -26,6 +26,7 @@ def onFrameChanged(iframe):
     skin2.setPose(fbx.loader.mMotion.pose(iframe))
 
 
+RE.useFSAA=True
             
 
 this=RE.createMainWin(sys.argv)
