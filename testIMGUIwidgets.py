@@ -107,11 +107,18 @@ def onImGui(imgui):
         # ------------------------------------------------------------
         # Text input
         # ------------------------------------------------------------
-        changed= imgui.InputText(
-            "Text",
-            self.text,
-            256
-        )
+        changed= imgui.InputText( "Text", self.text, 256)
+        #import ctypes
+        #changed= imgui.InputText( "Text", self.text, 256, imgui.InputTextFlags_CallbackEdit, ptr)
+        #print(imgui.InputText)
+        #print(imgui.InputText.__doc__)
+        #print(imgui.ImGuiInputTextCallbackData)
+        #print(dir(imgui.ImGuiInputTextCallbackData))
+        #import Ogre # pip install ogre-python
+        #print([x for x in dir(imgui) if "ptr" in x.lower()])
+        #print([x for x in dir(imgui) if "callback" in x.lower()])
+        #print([x for x in dir(Ogre) if "ptr" in x.lower()])
+        #print( [x for x in dir(Ogre.ImGui) if "ptr" in x.lower()])
         # there seems to be no way to get the text back.
 
         # ------------------------------------------------------------
@@ -182,4 +189,5 @@ this.addButton("Button", "button a") # events goes to onCallback
 
 while True:
     if not RE.renderOneFrame(True): break
+
 
