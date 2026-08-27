@@ -16,7 +16,9 @@ import __main__
 import numpy as np
 import weakref
 import platform
-useFSAA=False
+# public options
+useFSAA=False # set before RE.createMainWin()
+menuVisible=True # you can set this freely anytime.
 
 _layoutHeight=500
 _capture_frame=None
@@ -1521,7 +1523,7 @@ def _world_to_screen(world_pos):
 
     return int(screen_x), int(screen_y), True
 def ui_callback(): # handle ui events and draw texts
-    global _layout, _mouseInfo, _window_data,_softKill,_drawOutput,_outputs, _layoutHeight, _timeline, _capture_frame 
+    global _layout, _mouseInfo, _window_data,_softKill,_drawOutput,_outputs, _layoutHeight, _timeline, _capture_frame , menuVisible
     # This function is called every frame to draw your custom ImGui elements
     io = imgui.GetIO()
     io.FontGlobalScale = _ui_scale
@@ -1538,6 +1540,8 @@ def ui_callback(): # handle ui events and draw texts
             _capture_frame=None
 
 
+    if(imgui.IsKeyPressed(imgui.Key_H) ):
+        menuVisible=not menuVisible
     # draw texts
 
     draw_list=imgui.GetForegroundDrawList()
@@ -1554,7 +1558,7 @@ def ui_callback(): # handle ui events and draw texts
     # ImGui UI
     # -----------------------------
     imgui.SetNextWindowSize(imgui.ImVec2(230*_ui_scale, _layoutHeight*_ui_scale), imgui.Cond_Once);
-    if imgui.Begin("Menu"):
+    if menuVisible and imgui.Begin("Menu"):
         if hasattr(__main__,'onCallback'):
             onCallback=checkedOnCallback
         else:
@@ -1661,38 +1665,42 @@ def ui_callback(): # handle ui events and draw texts
     altPressed = imgui.GetIO().KeyAlt;
     ctrlPressed = imgui.GetIO().KeyCtrl;
     shiftPressed = imgui.GetIO().KeyShift;
-    imgui.Separator();
-    imgui.Text("press q to quit.")
-    #imgui.Text(f"alt:{altPressed}, ctrl:{ctrlPressed}, shift:{shiftPressed}")
+    if menuVisible:
+        imgui.Separator();
+        imgui.Text("Press 'q' to quit.")
+        if imgui.IsItemHovered():
+            imgui.SetTooltip("Press 'H' to show/hide all menus. Currently pressed modifier keys:"+f"alt:{altPressed}, ctrl:{ctrlPressed}, shift:{shiftPressed}")
 
-    changed,value=imgui.Checkbox('capture', _capture_frame is not None)
 
-    if changed:
+        changed,value=imgui.Checkbox('capture', _capture_frame is not None)
+
+        if changed:
+            if value:
+                _capture_frame=0
+            else:
+                _capture_frame=None
+
+        changed,value=imgui.Checkbox('show debug output', _drawOutput)
+        if changed:
+            _drawOutput=value
         if value:
-            _capture_frame=0
-        else:
-            _capture_frame=None
 
-    changed,value=imgui.Checkbox('show debug output', _drawOutput)
-    if changed:
-        _drawOutput=value
-    if value:
+            io = imgui.GetIO()
 
-        io = imgui.GetIO()
+            window_width=300*_ui_scale
+            imgui.SetNextWindowPos( imgui.ImVec2(io.DisplaySize.x - window_width, 0))
 
-        window_width=300*_ui_scale
-        imgui.SetNextWindowPos( imgui.ImVec2(io.DisplaySize.x - window_width, 0))
+            imgui.SetNextWindowSize( imgui.ImVec2( window_width, 500*_ui_scale), imgui.Cond_Once)
+            if imgui.Begin("debug output"):
+                imgui.Text('use  RE.output("msg key", "msg")')
+                imgui.Separator();
+                for i, key in enumerate(sorted(_outputs)):
+                    imgui.Text(f"{key}\t{_outputs[key]}")
 
-        imgui.SetNextWindowSize( imgui.ImVec2( window_width, 500*_ui_scale), imgui.Cond_Once)
-        if imgui.Begin("debug output"):
-            imgui.Text('use  RE.output("msg key", "msg")')
-            imgui.Separator();
-            for i, key in enumerate(sorted(_outputs)):
-                imgui.Text(f"{key}\t{_outputs[key]}")
+            imgui.End()
 
+    if menuVisible:
         imgui.End()
-
-    imgui.End()
 
 
     if hasattr(__main__, "onImGui"):
@@ -2577,7 +2585,7 @@ class Timeline:
         self.playing=False
         _timeline=self
     def draw(self):
-        global _ui_scale
+        global _ui_scale, menuVisible
 
         io = imgui.GetIO()
         window_height = 50*_ui_scale
@@ -2597,7 +2605,7 @@ class Timeline:
             self.playing=False
             self.changeCurrFrame(self.currFrame+1)
             
-        if imgui.Begin("Timeline"):
+        if menuVisible and imgui.Begin("Timeline"):
             # 화면 하단에 고정
             imgui.SetWindowPos( imgui.ImVec2(0, io.DisplaySize.y - window_height))
 
@@ -2641,7 +2649,8 @@ class Timeline:
                 self.changeCurrFrame(frame)
         else:
             imgui.SetWindowPos( imgui.ImVec2(0, io.DisplaySize.y - 10))
-        imgui.End()
+        if menuVisible:
+            imgui.End()
         return hovered
     def __del__(self):
         global _frameMoveObjects
