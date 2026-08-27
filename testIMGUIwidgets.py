@@ -119,6 +119,14 @@ def onImGui(imgui):
         #print([x for x in dir(imgui) if "callback" in x.lower()])
         #print([x for x in dir(Ogre) if "ptr" in x.lower()])
         #print( [x for x in dir(Ogre.ImGui) if "ptr" in x.lower()])
+        #if changed:
+        #    io = imgui.GetIO()
+        #    q=io.InputQueueCharacters
+
+        #    print(type(q))
+        #    print(dir(q))
+        #    for c in io.InputQueueCharacters:
+        #        print(chr(c))
         # there seems to be no way to get the text back.
 
         # ------------------------------------------------------------

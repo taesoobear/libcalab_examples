@@ -1530,6 +1530,14 @@ def ui_callback(): # handle ui events and draw texts
     imgui.SetNextWindowSize(imgui.ImVec2(200*_ui_scale, 200*_ui_scale), imgui.Cond_Once)
     imgui.SetNextWindowPos(imgui.ImVec2(0,0))
 
+    # global shortcuts
+    if(io.KeyCtrl and imgui.IsKeyPressed(imgui.Key_C) ):
+        if _capture_frame is None:
+            _capture_frame=0
+        else:
+            _capture_frame=None
+
+
     # draw texts
 
     draw_list=imgui.GetForegroundDrawList()
@@ -1658,11 +1666,6 @@ def ui_callback(): # handle ui events and draw texts
     #imgui.Text(f"alt:{altPressed}, ctrl:{ctrlPressed}, shift:{shiftPressed}")
 
     changed,value=imgui.Checkbox('capture', _capture_frame is not None)
-
-    io = imgui.GetIO()
-    if(io.KeyCtrl and imgui.IsKeyPressed(imgui.Key_C) ):
-        value=_capture_frame is None
-        changed=True
 
     if changed:
         if value:
@@ -2582,6 +2585,18 @@ class Timeline:
 
         imgui.SetNextWindowSize( imgui.ImVec2( io.DisplaySize.x, window_height))
         hovered=False
+        # global shortcuts
+        if ( io.KeyCtrl and imgui.IsKeyPressed(imgui.Key_P)):
+            self.playing = not self.playing
+        if ( io.KeyCtrl and imgui.IsKeyPressed(imgui.Key_0)):
+            self.changeCurrFrame(0)
+        if imgui.IsKeyPressed(imgui.Key_LeftBracket):
+            self.playing=False
+            self.changeCurrFrame(self.currFrame-1)
+        if imgui.IsKeyPressed(imgui.Key_RightBracket):
+            self.playing=False
+            self.changeCurrFrame(self.currFrame+1)
+            
         if imgui.Begin("Timeline"):
             # 화면 하단에 고정
             imgui.SetWindowPos( imgui.ImVec2(0, io.DisplaySize.y - window_height))
@@ -2592,31 +2607,25 @@ class Timeline:
             hovered = (
                 wx.x <= mx.x <= wx.x + wh.x and
                 wx.y <= mx.y <= wx.y + wh.y)
-            shortcut = ( io.KeyCtrl and imgui.IsKeyPressed(imgui.Key_P))
-            shortcut2 = ( io.KeyCtrl and imgui.IsKeyPressed(imgui.Key_0))
-            if shortcut2:
-                self.changeCurrFrame(0)
-            if imgui.IsKeyPressed(imgui.Key_LeftBracket):
-                self.playing=False
-                self.changeCurrFrame(self.currFrame-1)
-            if imgui.IsKeyPressed(imgui.Key_RightBracket):
-                self.playing=False
-                self.changeCurrFrame(self.currFrame+1)
 
 
 
             if platform.system() == "Darwin":
-                shortcut_text="Alt+P or Alt+0"
+                shortcut_text = "Alt+P to play/pause. Alt+0 to go to frame 0. [ or ] to move one frame backward or forward."
             else:
-                shortcut_text="Ctrl+P or Alt+0"
+                shortcut_text = "Ctrl+P to play/pause. Ctrl+0 to go to frame 0. [ or ] to move one frame backward or forward."
             # play / pause
-            if imgui.Button("Pause" if self.playing else "Play") or shortcut:
+            if imgui.Button("Pause" if self.playing else "Play") :
                 self.playing = not self.playing
+
+            if imgui.IsItemHovered():
+                imgui.SetTooltip(shortcut_text)
+
             imgui.SameLine()
 
 
-            imgui.TextDisabled(shortcut_text)
-            imgui.SameLine()
+            #imgui.TextDisabled(shortcut_text)
+            #imgui.SameLine()
 
             imgui.SetNextItemWidth(-1)
             # timeline slider
