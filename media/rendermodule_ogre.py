@@ -3569,3 +3569,12 @@ def motionWin():
     return _MotionPanel_MotionWin()
 def setViewZup():
     setViewYup(False)
+def setBackgroundColour(r: float,g: float,b: float):
+    """
+    r,g,b in [0,1]
+    """
+    global _window_data
+    mViewport=_window_data.window.getViewport(0)
+    mViewport.setBackgroundColour(Ogre.ColourValue(r,g,b))
+
+
