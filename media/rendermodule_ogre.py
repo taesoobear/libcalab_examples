@@ -3628,3 +3628,12 @@ def offscreenRender(W=1280, H=720):
         
     rgba = img[..., [3, 2, 1, 0]]   
     return rgba
+def setBackgroundColour(r: float,g: float,b: float):
+    """
+    r,g,b in [0,1]
+    """
+    global _window_data
+    mViewport=_window_data.window.getViewport(0)
+    mViewport.setBackgroundColour(Ogre.ColourValue(r,g,b))
+
+
