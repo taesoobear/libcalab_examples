@@ -1861,7 +1861,7 @@ set /p res=Press Enter to continue.
 
     subprocess.run(ps_cmd, check=True)
 
-def createMainWin(*args):
+def createMainWin(*args, W=1278, H=768):
     global _window_data, _layout,_luaEnv, _ui_scale
     RE_consolemode.createMainWin()
 
@@ -1895,7 +1895,7 @@ def createMainWin(*args):
             os.symlink(cache_root/'IPCDNNwalk'/'work', 'work')
 
     window_name='Ogre ImGui'
-    imsize=(1278,768)
+    imsize=(W,H)
     # Setup the Ogre window and mesh
     #ohi.window_create("Ogre ImGui Demo", (1278, 768))
     
@@ -3569,3 +3569,62 @@ def motionWin():
     return _MotionPanel_MotionWin()
 def setViewZup():
     setViewYup(False)
+
+
+def offscreenRender(W=1280, H=720):
+    tex_mgr = Ogre.TextureManager.getSingleton()
+    tex_name = "OffscreenRT"
+    group = Ogre.ResourceGroupManager.DEFAULT_RESOURCE_GROUP_NAME
+
+    if not tex_mgr.resourceExists(tex_name):
+        print("texture does not exist")
+        tex = tex_mgr.createManual(
+            tex_name,
+            Ogre.ResourceGroupManager.DEFAULT_RESOURCE_GROUP_NAME,
+            Ogre.TEX_TYPE_2D,
+            W, H, 1,
+            0,
+            Ogre.PF_R8G8B8A8,       # RGB 말고 RGBA
+            Ogre.TU_RENDERTARGET,
+            None,                   # loader
+            False,                  # hwGamma
+            4 if useFSAA else 0                       # FSAA = 4x
+            )
+    else:
+        tex = tex_mgr.getByName(tex_name)
+    rt = tex.getBuffer(0,0).getRenderTarget()
+    camera=_window_data.camera
+    # 3. Camera를 viewport에 연결
+    if rt.getNumViewports() == 0:
+        vp = rt.addViewport(camera)
+        vp.setClearEveryFrame(True)
+        vp.setBackgroundColour(Ogre.ColourValue(0, 0, 0))
+        vp.setOverlaysEnabled(False)
+    else:
+        vp = rt.getViewport(0)
+
+    # 4. 렌더링
+    rt.update()
+
+    # 연속된 CPU buffer
+    img = np.empty((H, W, 4), dtype=np.uint8)
+
+    # Python buffer protocol
+    mem = memoryview(img)
+
+    pb = Ogre.PixelBox(
+        W,
+        H,
+        1,
+        Ogre.PF_R8G8B8A8,
+        mem
+    )
+
+    gpu_buf = tex.getBuffer(0, 0)
+    gpu_buf.blitToMemory(pb)
+
+    # 필요하면 상하 반전
+    #img = np.flipud(img).copy()
+        
+    rgba = img[..., [3, 2, 1, 0]]   
+    return rgba
