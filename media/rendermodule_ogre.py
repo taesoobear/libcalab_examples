@@ -998,6 +998,17 @@ def drawLine(objectList, startpos, endpos, nameid=None, color='green'):
     if nameid is None:
         nameid=RE_consolemode.generateUniqueName()
     drawBillboard( lines.matView(), nameid,color , 1.5 ,"BillboardLineList")
+def drawLines(nameid, startpos, endpos, color='green', thickness=1.5):
+    lines=m.matrixn() 
+    if isinstance(startpos, m.vector3N):
+        pdb.set_trace() # not implemented yet
+    elif isinstance(startpos, m.matrixn):
+        pdb.set_trace() # not implemented yet
+    else:
+        lines.resize(startpos.shape[0]*2,3)
+        lines .array[:,:]= np.stack([startpos, endpos], axis=1).reshape(-1, 3)
+
+    drawBillboard( lines, nameid,color , thickness ,"BillboardLineList")
 
 def drawText(objectList, pos, nameid, vec3_color=None, height=None, text=None):
     mat=vec3_color or m.vector3(1,1,1)
