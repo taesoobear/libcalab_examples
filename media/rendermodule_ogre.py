@@ -2925,6 +2925,10 @@ RE_consolemode.createVRMLskin=createVRMLskin
 m.createVRMLskin=createVRMLskin
 m.createSkin=_createSkin
 RE_consolemode.createFBXskin=createFBXskin
+toVector3=RE_consolemode.toVector3
+toQuater=RE_consolemode.toQuater
+toTransf=RE_consolemode.toTransf
+V4toQuater=RE_consolemode.V4toQuater
 
 class FBXloaderSkin:
     def __init__(self, fbxloader, option=None):
